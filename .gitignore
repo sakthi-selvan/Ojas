@@ -3,5 +3,5 @@ dist/
 out/
 release/
 *.log
-.data/
+.data*/
 .env

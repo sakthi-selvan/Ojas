@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { ServerEvent } from "@hs/shared";
+import type { ServerEvent } from "@ojas/shared";
 
 export type Connection = "connecting" | "online" | "offline";
 

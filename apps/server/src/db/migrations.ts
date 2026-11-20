@@ -28,7 +28,7 @@ export const migrations: { id: number; name: string; sql: string }[] = [
         name    text not null,
         address text not null default '',
         phone   text not null default '',
-        uhid_prefix text not null default 'HS-',
+        uhid_prefix text not null default 'OJ-',
         ${meta}
       );
 

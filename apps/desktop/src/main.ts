@@ -1,12 +1,12 @@
 /**
- * HealthSuite desktop shell.
+ * Ojas desktop shell.
  *
- * Modes (from %ProgramData%\HealthSuite\desktop.json, written by the installer / first-run wizard):
+ * Modes (from %ProgramData%\Ojas\desktop.json, written by the installer / first-run wizard):
  *   standalone: this PC is both server and client. The shell starts the bundled server and opens it.
  *   client:     this PC is a LAN terminal. The shell opens the hospital server's URL.
- * Dev:  HS_DEV_URL=http://127.0.0.1:5173 loads the Vite dev server (the server runs via `npm run dev`).
+ * Dev:  OJAS_DEV_URL=http://127.0.0.1:5173 loads the Vite dev server (the server runs via `npm run dev`).
  *
- * The UI is the same web app in every mode, served by the HealthSuite server, so LAN terminals
+ * The UI is the same web app in every mode, served by the Ojas server, so LAN terminals
  * always run the server's UI version and never fall out of step with it.
  */
 import { app, BrowserWindow, ipcMain, shell, utilityProcess, dialog, type UtilityProcess } from "electron";
@@ -20,14 +20,14 @@ interface DesktopConfig {
   port?: number;
 }
 
-const PROGRAM_DATA = join(process.env.PROGRAMDATA ?? app.getPath("userData"), "HealthSuite");
+const PROGRAM_DATA = join(process.env.PROGRAMDATA ?? app.getPath("userData"), "Ojas");
 
 function loadConfig(): DesktopConfig {
   const file = join(PROGRAM_DATA, "desktop.json");
   try {
     if (existsSync(file)) return { mode: "standalone", ...JSON.parse(readFileSync(file, "utf8")) } as DesktopConfig;
   } catch (e) {
-    dialog.showErrorBox("HealthSuite", `Settings file is damaged: ${file}\n\n${String(e)}\n\nStarting as a standalone system.`);
+    dialog.showErrorBox("Ojas", `Settings file is damaged: ${file}\n\n${String(e)}\n\nStarting as a standalone system.`);
   }
   return { mode: "standalone" };
 }
@@ -44,7 +44,7 @@ async function waitForHealth(base: string, timeoutMs = 60_000): Promise<void> {
     } catch { /* not up yet */ }
     await new Promise((r) => setTimeout(r, 300));
   }
-  throw new Error(`HealthSuite server did not start within ${timeoutMs / 1000}s`);
+  throw new Error(`Ojas server did not start within ${timeoutMs / 1000}s`);
 }
 
 /** Standalone: run the bundled server in an Electron utility process (no separate Node install needed). */
@@ -52,26 +52,26 @@ function startEmbeddedServer(port: number): void {
   const resources = app.isPackaged ? process.resourcesPath : join(__dirname, "..", "..");
   const entry = app.isPackaged ? join(resources, "server", "main.js") : join(resources, "server", "dist", "main.js");
   const webDir = app.isPackaged ? join(resources, "web") : join(resources, "web", "dist");
-  const dataDir = process.env.HS_DATA_DIR ?? join(PROGRAM_DATA, "data", "db");
+  const dataDir = process.env.OJAS_DATA_DIR ?? join(PROGRAM_DATA, "data", "db");
   mkdirSync(dataDir, { recursive: true });
   server = utilityProcess.fork(entry, [], {
-    serviceName: "HealthSuite Server",
+    serviceName: "Ojas Server",
     stdio: "inherit",
-    env: { ...process.env, HS_PORT: String(port), HS_HOST: "127.0.0.1", HS_DATA_DIR: dataDir, HS_WEB_DIR: webDir },
+    env: { ...process.env, OJAS_PORT: String(port), OJAS_HOST: "127.0.0.1", OJAS_DATA_DIR: dataDir, OJAS_WEB_DIR: webDir },
   });
   server.on("exit", (code) => {
-    if (!quitting) dialog.showErrorBox("HealthSuite", `The local server stopped unexpectedly (code ${code}). Your saved data is safe. Please restart HealthSuite.`);
+    if (!quitting) dialog.showErrorBox("Ojas", `The local server stopped unexpectedly (code ${code}). Your saved data is safe. Please restart Ojas.`);
   });
 }
 
 async function resolveUrl(): Promise<string> {
-  if (process.env.HS_DEV_URL) return process.env.HS_DEV_URL;
+  if (process.env.OJAS_DEV_URL) return process.env.OJAS_DEV_URL;
   const cfg = loadConfig();
   if (cfg.mode === "client") {
     if (!cfg.serverUrl) throw new Error("Client mode needs serverUrl in desktop.json");
     return cfg.serverUrl.replace(/\/$/, "");
   }
-  const port = Number(process.env.HS_PORT ?? cfg.port ?? 4870);
+  const port = Number(process.env.OJAS_PORT ?? cfg.port ?? 4870);
   const base = `http://127.0.0.1:${port}`;
   startEmbeddedServer(port);
   await waitForHealth(base);
@@ -86,7 +86,7 @@ function createWindow(url: string): void {
     minWidth: 1024,
     minHeight: 680,
     show: false,
-    title: "HealthSuite",
+    title: "Ojas",
     autoHideMenuBar: true,
     backgroundColor: "#0f1214",
     webPreferences: {
@@ -102,7 +102,7 @@ function createWindow(url: string): void {
     win?.show();
   });
 
-  // Security: the window may only show the HealthSuite server. Anything else opens in the normal browser.
+  // Security: the window may only show the Ojas server. Anything else opens in the normal browser.
   win.webContents.setWindowOpenHandler(({ url: target }) => {
     if (/^https?:/.test(target)) void shell.openExternal(target);
     return { action: "deny" };
@@ -117,7 +117,7 @@ function createWindow(url: string): void {
     void win?.loadURL(
       "data:text/html;charset=utf-8," +
         encodeURIComponent(`<body style="font:16px Segoe UI;background:#0f1214;color:#eef1f4;display:grid;place-items:center;height:100vh;margin:0">
-          <div style="max-width:480px;text-align:center"><h2>Can't reach the HealthSuite server</h2>
+          <div style="max-width:480px;text-align:center"><h2>Can't reach the Ojas server</h2>
           <p style="color:#b8c0c8">${origin} (${desc}). Check that the server PC is switched on and this PC is on the same network.</p>
           <p style="color:#8f99a3">Retrying automatically…</p></div></body>`),
     );
@@ -128,13 +128,13 @@ function createWindow(url: string): void {
 }
 
 // Silent printing straight to the default printer: receipts and token slips need no dialog at the desk.
-ipcMain.handle("hs:print", async (e, opts?: { silent?: boolean; deviceName?: string }) => {
+ipcMain.handle("ojas:print", async (e, opts?: { silent?: boolean; deviceName?: string }) => {
   const wc = e.sender;
   return new Promise<{ ok: boolean; error?: string }>((resolve) =>
     wc.print({ silent: opts?.silent ?? true, printBackground: false, deviceName: opts?.deviceName }, (ok, error) => resolve({ ok, error })),
   );
 });
-ipcMain.handle("hs:printers", (e) => e.sender.getPrintersAsync());
+ipcMain.handle("ojas:printers", (e) => e.sender.getPrintersAsync());
 
 let quitting = false;
 if (!app.requestSingleInstanceLock()) {
@@ -148,7 +148,7 @@ if (!app.requestSingleInstanceLock()) {
     try {
       createWindow(await resolveUrl());
     } catch (e) {
-      dialog.showErrorBox("HealthSuite could not start", String(e instanceof Error ? e.message : e));
+      dialog.showErrorBox("Ojas could not start", String(e instanceof Error ? e.message : e));
       app.quit();
     }
   });

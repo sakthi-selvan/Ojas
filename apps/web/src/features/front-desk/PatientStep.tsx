@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Search, UserPlus, Phone } from "lucide-react";
-import { ageLabel, type Patient, type PatientSearchResult, type Sex } from "@hs/shared";
+import { ageLabel, type Patient, type PatientSearchResult, type Sex } from "@ojas/shared";
 import { api, ApiError } from "../../lib/api";
 import { useHotkeys } from "../../lib/hotkeys";
 import { Alert, Badge, Button, Field, Kbd, Segmented, cx } from "../../components/ui";

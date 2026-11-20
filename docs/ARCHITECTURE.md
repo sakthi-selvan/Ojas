@@ -25,7 +25,7 @@
 ```
  Mode A: Standalone (Clinic / small pharmacy)    Mode B: LAN (Hospital / Lab)
  ┌──────────────────────────┐            ┌──────────────── Server PC (or mini server) ────────────────┐
- │  Single PC               │            │  HealthSuite Server (Windows Service)                       │
+ │  Single PC               │            │  Ojas Server (Windows Service)                              │
  │  ┌────────┐  ┌────────┐  │            │  PostgreSQL · Backup agent · Device bridge · Sync agent     │
  │  │ Client │─▶│ Server │  │            └───────────────▲──────────────▲──────────────▲───────────────┘
  │  └────────┘  │ + DB   │  │                            │ HTTPS + WebSocket (LAN)    │
@@ -64,8 +64,8 @@
 Do not use microservices: they are operationally impossible for an offline hospital with no IT staff. Build **one server process with strictly separated modules.** Modules communicate through in-process interfaces and domain events, never through each other's tables.
 
 ```
-┌──────────────────────────────────────── HealthSuite Server ────────────────────────────────────────┐
-│  API layer (REST + WebSocket)  ·  AuthZ (RBAC)  ·  Licence gate (which modules are enabled)          │
+┌─────────────────────────────────────────── Ojas Server ────────────────────────────────────────────┐
+│  API layer (REST + WebSocket)  ·  AuthZ (RBAC)  ·  Licence gate (which modules are enabled)        │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │  PRODUCT MODULES                                                                                    │
 │  ┌──────────── HMS ───────────┐ ┌──────── LIMS ────────┐ ┌──────── PMS ────────┐ ┌──── CMS ────┐   │
@@ -168,7 +168,7 @@ One screen, no page changes, keyboard-first:
 |---|---|
 | **Backup** | Hourly incremental (WAL archive) plus a nightly full `pg_dump`. AES-encrypted. Copied to a second disk and/or a USB/NAS. **Red banner on every screen if the last good backup is more than 24 h old.** One-click restore, with a monthly restore test on a scratch database. |
 | **Licensing** | Offline activation: machine fingerprint → licence request file → signed licence file (Ed25519) returned by email or phone. The licence lists enabled modules, user count and expiry. Grace period, and **never lock out clinical data reads**. |
-| **Updates** | Signed `.hsupdate` package delivered over USB, LAN share or optional internet. Server updates first (backup → migrate → health check → auto-rollback on failure). Clients auto-update from the server. |
+| **Updates** | Signed `.ojasupdate` package delivered over USB, LAN share or optional internet. Server updates first (backup → migrate → health check → auto-rollback on failure). Clients auto-update from the server. |
 | **Server down** | Clients show a clear "Server unreachable" status and retry. Optional standby replica (Mode C). UPS guidance in the install checklist. |
 | **Time** | The server is the source of truth for time, and clients use server time for all records, because PC clocks drift and ruin audit trails. |
 | **Hardware** | Device Bridge: barcode scanners (keyboard-wedge, works anywhere), label printers, thermal printers, cash drawer, analyzers, token display screens (a browser pointed at a server URL). |
@@ -190,7 +190,7 @@ One screen, no page changes, keyboard-first:
 ## 9. Solution / repository layout
 
 ```
-healthsuite/
+ojas/
 ├─ apps/
 │  ├─ desktop/   Electron shell: standalone (starts embedded server) or LAN client; silent printing bridge
 │  ├─ server/    Fastify server: db adapter (PGlite | Postgres), migrations, core services, modules

@@ -1,5 +1,5 @@
 {
-  "name": "healthsuite",
+  "name": "ojas",
   "private": true,
   "version": "0.1.0",
   "description": "Offline-first Hospital / Lab / Pharmacy / Clinic suite",
@@ -8,9 +8,9 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently -n server,web -c blue,green \"npm:dev -w @hs/server\" \"npm:dev -w @hs/web\"",
-    "dev:desktop": "concurrently -n server,web,desktop -c blue,green,magenta \"npm:dev -w @hs/server\" \"npm:dev -w @hs/web\" \"npm:dev -w @hs/desktop\"",
-    "build": "npm run build -w @hs/web && npm run build -w @hs/server && npm run build -w @hs/desktop",
+    "dev": "concurrently -n server,web -c blue,green \"npm:dev -w @ojas/server\" \"npm:dev -w @ojas/web\"",
+    "dev:desktop": "concurrently -n server,web,desktop -c blue,green,magenta \"npm:dev -w @ojas/server\" \"npm:dev -w @ojas/web\" \"npm:dev -w @ojas/desktop\"",
+    "build": "npm run build -w @ojas/web && npm run build -w @ojas/server && npm run build -w @ojas/desktop",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
   },

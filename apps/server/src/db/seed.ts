@@ -11,8 +11,8 @@ export async function seedIfEmpty(db: Db): Promise<void> {
 
   await db.tx(async (q) => {
     await q.query(
-      "insert into core.facility (id, name, address, phone, uhid_prefix) values (1, $1, $2, $3, 'HS-')",
-      ["HealthSuite Demo Clinic", "12 Gandhi Road, Chennai 600001", "044-2345 6789"],
+      "insert into core.facility (id, name, address, phone, uhid_prefix) values (1, $1, $2, $3, 'OJ-')",
+      ["Ojas Demo Clinic", "12 Gandhi Road, Chennai 600001", "044-2345 6789"],
     );
     const doctors: [string, string, number, number, string, string][] = [
       // name, department, fee (paise), slot minutes, day start, day end

@@ -12,7 +12,7 @@ await seedIfEmpty(db);
 const app = await buildApp({ db, webDir: config.webDir, logger: true });
 
 await app.listen({ port: config.port, host: config.host });
-app.log.info(`HealthSuite server ready (${db.engine}) on http://${config.host}:${config.port}`);
+app.log.info(`Ojas server ready (${db.engine}) on http://${config.host}:${config.port}`);
 
 // Graceful shutdown: PGlite must flush to disk, or the last writes could be lost on exit.
 let closing = false;

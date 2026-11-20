@@ -1,4 +1,6 @@
-# HealthSuite
+# Ojas
+
+*Ojas (ओजस्), Sanskrit for vitality and inner strength.*
 
 An offline-first healthcare suite for Windows: **Hospital (HMS) · Laboratory (LIMS) · Pharmacy (PMS) · Clinic (CMS)**, all on one platform.
 Design goal: a receptionist registers a patient, books an appointment and prints a bill in under a minute, with no training.
@@ -39,23 +41,23 @@ npm run dev:desktop
 Run the server's integration tests (in-memory Postgres):
 
 ```powershell
-npm test -w @hs/server
+npm test -w @ojas/server
 ```
 
 Build everything, then start the desktop app in standalone mode (it starts its own server):
 
 ```powershell
-npm run build; npm start -w @hs/desktop
+npm run build; npm start -w @ojas/desktop
 ```
 
 | Env var | Meaning | Default |
 |---|---|---|
-| `HS_PORT` / `HS_HOST` | Server bind | `4870` / `127.0.0.1` (use `0.0.0.0` for a LAN server) |
-| `HS_DB_URL` | Use real PostgreSQL instead of the embedded database | — |
-| `HS_DATA_DIR` | Embedded database folder | `apps/server/.data/db` in dev, `%ProgramData%\HealthSuite\data\db` in desktop |
-| `HS_WEB_DIR` | Built UI to serve to LAN browsers | — |
+| `OJAS_PORT` / `OJAS_HOST` | Server bind | `4870` / `127.0.0.1` (use `0.0.0.0` for a LAN server) |
+| `OJAS_DB_URL` | Use real PostgreSQL instead of the embedded database | — |
+| `OJAS_DATA_DIR` | Embedded database folder | `apps/server/.data/db` in dev, `%ProgramData%\Ojas\data\db` in desktop |
+| `OJAS_WEB_DIR` | Built UI to serve to LAN browsers | — |
 
-Desktop mode is set in `%ProgramData%\HealthSuite\desktop.json`: `{"mode":"standalone"}` or `{"mode":"client","serverUrl":"http://192.168.1.10:4870"}`.
+Desktop mode is set in `%ProgramData%\Ojas\desktop.json`: `{"mode":"standalone"}` or `{"mode":"client","serverUrl":"http://192.168.1.10:4870"}`.
 
 ## Not done yet (next milestones)
 

@@ -30,8 +30,8 @@ export interface AppOptions {
 function actorOf(req: FastifyRequest): Actor {
   const h = req.headers;
   return {
-    user: String(h["x-hs-user"] ?? "reception").slice(0, 64),
-    terminal: String(h["x-hs-terminal"] ?? req.ip).slice(0, 64),
+    user: String(h["x-ojas-user"] ?? "reception").slice(0, 64),
+    terminal: String(h["x-ojas-terminal"] ?? req.ip).slice(0, 64),
   };
 }
 

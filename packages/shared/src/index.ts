@@ -1,5 +1,5 @@
 /**
- * Shared contracts between the HealthSuite server and every client (web UI, Electron, future mobile).
+ * Shared contracts between the Ojas server and every client (web UI, Electron, future mobile).
  * One source of truth: the server validates requests with these schemas and the UI uses the same
  * schemas for forms, so the two can never drift apart.
  */

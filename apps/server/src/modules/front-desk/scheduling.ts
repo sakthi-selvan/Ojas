@@ -1,4 +1,4 @@
-import type { Practitioner, Slot } from "@hs/shared";
+import type { Practitioner, Slot } from "@ojas/shared";
 import type { Queryable } from "../../db/index.js";
 import { AppError } from "../../core/errors.js";
 import { atLocal } from "../../core/clock.js";

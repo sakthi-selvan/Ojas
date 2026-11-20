@@ -18,10 +18,10 @@ export interface Config {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
-    port: Number(env.HS_PORT ?? 4870),
-    host: env.HS_HOST ?? "127.0.0.1",
-    dbUrl: env.HS_DB_URL || undefined,
-    dataDir: env.HS_DATA_DIR ?? join(process.cwd(), ".data", "db"),
-    webDir: env.HS_WEB_DIR || undefined,
+    port: Number(env.OJAS_PORT ?? 4870),
+    host: env.OJAS_HOST ?? "127.0.0.1",
+    dbUrl: env.OJAS_DB_URL || undefined,
+    dataDir: env.OJAS_DATA_DIR ?? join(process.cwd(), ".data", "db"),
+    webDir: env.OJAS_WEB_DIR || undefined,
   };
 }

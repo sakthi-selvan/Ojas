@@ -1,12 +1,12 @@
 {
-  "name": "@hs/desktop",
+  "name": "@ojas/desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "HealthSuite desktop shell (Electron)",
+  "description": "Ojas desktop shell (Electron)",
   "main": "dist/main.cjs",
   "scripts": {
     "build": "esbuild src/main.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/main.cjs && esbuild src/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/preload.cjs",
-    "dev": "npm run build && wait-on http://127.0.0.1:5173 && cross-env HS_DEV_URL=http://127.0.0.1:5173 electron .",
+    "dev": "npm run build && wait-on http://127.0.0.1:5173 && cross-env OJAS_DEV_URL=http://127.0.0.1:5173 electron .",
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit"
   },

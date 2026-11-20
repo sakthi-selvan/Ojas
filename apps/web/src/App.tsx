@@ -38,7 +38,7 @@ export function App() {
           <span className="grid size-8 place-items-center rounded-lg bg-accent text-accent-ink" aria-hidden>
             +
           </span>
-          <span className="hidden sm:inline">{facility.data?.name ?? "HealthSuite"}</span>
+          <span className="hidden sm:inline">{facility.data?.name ?? "Ojas"}</span>
         </div>
         <nav aria-label="Main" className="flex items-center gap-1">
           {nav.map((n) => (

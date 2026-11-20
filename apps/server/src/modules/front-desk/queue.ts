@@ -1,4 +1,4 @@
-import { AppointmentStatus, type QueueItem } from "@hs/shared";
+import { AppointmentStatus, type QueueItem } from "@ojas/shared";
 import type { Db, Queryable } from "../../db/index.js";
 import { audit, type Actor } from "../../core/audit.js";
 import { AppError } from "../../core/errors.js";

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { QueueItem } from "@hs/shared";
+import type { QueueItem } from "@ojas/shared";
 import { Badge, Card } from "../../components/ui";
 import { QueueRow, useQueue } from "./QueuePanel";
 

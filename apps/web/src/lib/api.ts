@@ -1,6 +1,6 @@
 import type {
   CheckoutInput, Patient, PatientSearchResult, Practitioner, QueueItem, QuickRegisterInput, Receipt, Slot, AppointmentStatus,
-} from "@hs/shared";
+} from "@ojas/shared";
 
 /** Error shape returned by the server: a stable code plus a message written for the user. */
 export class ApiError extends Error {
@@ -15,8 +15,8 @@ export class ApiError extends Error {
 /** Stable per-PC terminal id, so the audit trail shows *which* desk did what. */
 function terminalId(): string {
   try {
-    let id = localStorage.getItem("hs.terminal");
-    if (!id) localStorage.setItem("hs.terminal", (id = `T-${crypto.randomUUID().slice(0, 8)}`));
+    let id = localStorage.getItem("ojas.terminal");
+    if (!id) localStorage.setItem("ojas.terminal", (id = `T-${crypto.randomUUID().slice(0, 8)}`));
     return id;
   } catch {
     return "T-unknown";
@@ -28,11 +28,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   try {
     res = await fetch(`/api${path}`, {
       method,
-      headers: { "content-type": "application/json", "x-hs-terminal": terminalId() },
+      headers: { "content-type": "application/json", "x-ojas-terminal": terminalId() },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new ApiError(0, "offline", "Can't reach the HealthSuite server. Check the network cable or that the server PC is on.");
+    throw new ApiError(0, "offline", "Can't reach the Ojas server. Check the network cable or that the server PC is on.");
   }
   const data = res.status === 204 ? undefined : await res.json().catch(() => undefined);
   if (!res.ok) {

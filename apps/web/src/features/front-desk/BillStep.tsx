@@ -1,12 +1,12 @@
 import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Banknote, CreditCard, Smartphone } from "lucide-react";
-import { formatINR, type PaymentMode, type Practitioner, type Receipt } from "@hs/shared";
+import { formatINR, type PaymentMode, type Practitioner, type Receipt } from "@ojas/shared";
 import { api, ApiError } from "../../lib/api";
 import { useHotkeys } from "../../lib/hotkeys";
 import { Alert, Button, Field, Segmented } from "../../components/ui";
 
-const LAST_MODE = "hs.frontdesk.paymentMode";
+const LAST_MODE = "ojas.frontdesk.paymentMode";
 const savedMode = (): PaymentMode => {
   try {
     const v = localStorage.getItem(LAST_MODE);

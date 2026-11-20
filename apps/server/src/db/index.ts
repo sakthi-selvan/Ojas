@@ -2,7 +2,7 @@
  * Database adapter. The rest of the server only sees `Db` / `Queryable` and writes plain PostgreSQL.
  *
  *  - Standalone / dev:  PGlite (PostgreSQL compiled to WASM, stored in a local folder). No install.
- *  - Hospital LAN:      real PostgreSQL via `HS_DB_URL=postgres://...` (replication, pg_dump, many clients).
+ *  - Hospital LAN:      real PostgreSQL via `OJAS_DB_URL=postgres://...` (replication, pg_dump, many clients).
  *
  * Both engines run the same SQL and the same migrations, so a clinic that grows into a hospital
  * moves its data with a plain pg_dump/restore.

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { CheckCircle2, Printer } from "lucide-react";
-import { ageLabel, formatINR, type Receipt } from "@hs/shared";
+import { ageLabel, formatINR, type Receipt } from "@ojas/shared";
 import { timeLabel } from "../../lib/api";
 import { useHotkeys } from "../../lib/hotkeys";
 import { Button } from "../../components/ui";
@@ -9,13 +9,13 @@ const modeLabel = { CASH: "Cash", UPI: "UPI", CARD: "Card" } as const;
 
 declare global {
   interface Window {
-    /** Present only inside the HealthSuite desktop app (see apps/desktop/src/preload.ts). */
-    healthsuite?: { desktop: true; print: (opts?: { silent?: boolean }) => Promise<{ ok: boolean; error?: string }> };
+    /** Present only inside the Ojas desktop app (see apps/desktop/src/preload.ts). */
+    ojas?: { desktop: true; print: (opts?: { silent?: boolean }) => Promise<{ ok: boolean; error?: string }> };
   }
 }
 
 /** Desktop app: silent print to the default (thermal) printer. Browser: the normal print dialog. */
-const printReceipt = () => (window.healthsuite ? void window.healthsuite.print({ silent: true }) : window.print());
+const printReceipt = () => (window.ojas ? void window.ojas.print({ silent: true }) : window.print());
 
 /** Success state: the token is what the patient needs, so it is the largest thing on screen. */
 export function ReceiptView({ receipt, onNext }: { receipt: Receipt; onNext: () => void }) {
@@ -55,10 +55,10 @@ export function ReceiptView({ receipt, onNext }: { receipt: Receipt; onNext: () 
 
 function shouldAutoPrint(): boolean {
   try {
-    const v = localStorage.getItem("hs.autoPrint");
+    const v = localStorage.getItem("ojas.autoPrint");
     if (v !== null) return v === "1";
   } catch { /* ignore */ }
-  return !!window.healthsuite; // desktop app: on by default
+  return !!window.ojas; // desktop app: on by default
 }
 
 /** Thermal-printer friendly receipt (80 mm). Hidden on screen, the only thing that prints. */

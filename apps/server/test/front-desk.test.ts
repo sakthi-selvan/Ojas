@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { Practitioner, Patient, Receipt, Slot } from "@hs/shared";
+import type { Practitioner, Patient, Receipt, Slot } from "@ojas/shared";
 import { openDb, type Db } from "../src/db/index.js";
 import { seedIfEmpty } from "../src/db/seed.js";
 import { buildApp } from "../src/app.js";
@@ -40,7 +40,7 @@ describe("quick registration", () => {
     const p = res.json() as Patient;
     expect(p.name).toBe("Ravi Kumar");
     expect(p.phone).toBe("9840012345");
-    expect(p.uhid).toBe("HS-000001");
+    expect(p.uhid).toBe("OJ-000001");
     expect(p.dobEstimated).toBe(true);
   });
 
@@ -53,14 +53,14 @@ describe("quick registration", () => {
   it("flags a likely duplicate and allows override", async () => {
     const dup = await register({ name: "Ravi Kumar", sex: "M", phone: "9840012345", ageYears: 42 });
     expect(dup.statusCode).toBe(409);
-    expect(dup.json().details.existing.uhid).toBe("HS-000001");
+    expect(dup.json().details.existing.uhid).toBe("OJ-000001");
     const forced = await register({ name: "Ravi Kumar", sex: "M", phone: "9840012345", ageYears: 12 }, true);
     expect(forced.statusCode).toBe(201);
-    expect((forced.json() as Patient).uhid).toBe("HS-000002");
+    expect((forced.json() as Patient).uhid).toBe("OJ-000002");
   });
 
   it("finds patients by phone prefix, last digits, UHID and name", async () => {
-    for (const q of ["98400", "2345", "HS-000001", "ravi", "kum"]) {
+    for (const q of ["98400", "2345", "OJ-000001", "ravi", "kum"]) {
       const res = await app.inject({ url: `/api/patients/search?q=${encodeURIComponent(q)}` });
       expect((res.json() as Patient[]).length, q).toBeGreaterThan(0);
     }

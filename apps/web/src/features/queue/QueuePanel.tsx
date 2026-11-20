@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AppointmentStatus, QueueItem } from "@hs/shared";
+import type { AppointmentStatus, QueueItem } from "@ojas/shared";
 import { api, timeLabel, today } from "../../lib/api";
 import { Alert, Badge, Button, Card, cx } from "../../components/ui";
 

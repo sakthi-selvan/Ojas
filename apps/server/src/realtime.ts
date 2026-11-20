@@ -1,4 +1,4 @@
-import type { ServerEvent } from "@hs/shared";
+import type { ServerEvent } from "@ojas/shared";
 import type { WebSocket } from "ws";
 
 /**

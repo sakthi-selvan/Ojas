@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ageLabel, formatINR, type Patient, type Receipt } from "@hs/shared";
+import { ageLabel, formatINR, type Patient, type Receipt } from "@ojas/shared";
 import { api, timeLabel } from "../../lib/api";
 import { Card, StepHeader } from "../../components/ui";
 import { PatientStep } from "./PatientStep";

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatINR, type Practitioner } from "@hs/shared";
+import { formatINR, type Practitioner } from "@ojas/shared";
 import { api, timeLabel, today } from "../../lib/api";
 import { Alert, Button, Kbd, cx } from "../../components/ui";
 
-const LAST_DOCTOR = "hs.frontdesk.lastDoctor";
+const LAST_DOCTOR = "ojas.frontdesk.lastDoctor";
 export const rememberDoctor = (id: string) => {
   try {
     localStorage.setItem(LAST_DOCTOR, id);

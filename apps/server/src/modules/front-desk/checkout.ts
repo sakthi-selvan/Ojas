@@ -1,4 +1,4 @@
-import { CheckoutInput, type InvoiceLine, type Receipt } from "@hs/shared";
+import { CheckoutInput, type InvoiceLine, type Receipt } from "@ojas/shared";
 import type { Db, Queryable } from "../../db/index.js";
 import { audit, type Actor } from "../../core/audit.js";
 import { AppError, isUniqueViolation } from "../../core/errors.js";
@@ -101,7 +101,7 @@ export async function checkout(db: Db, actor: Actor, input: unknown, now = new D
 
 async function facility(q: Queryable): Promise<Receipt["facility"]> {
   const { rows } = await q.query<{ name: string; address: string; phone: string }>("select name, address, phone from core.facility where id = 1");
-  return rows[0] ?? { name: "HealthSuite", address: "", phone: "" };
+  return rows[0] ?? { name: "Ojas", address: "", phone: "" };
 }
 
 /** Reprint: rebuild the receipt from the stored, immutable invoice records. */

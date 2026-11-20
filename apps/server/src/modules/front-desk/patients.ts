@@ -1,4 +1,4 @@
-import { QuickRegisterInput, type Patient, type PatientSearchResult } from "@hs/shared";
+import { QuickRegisterInput, type Patient, type PatientSearchResult } from "@ojas/shared";
 import type { Db, Queryable } from "../../db/index.js";
 import { audit, type Actor } from "../../core/audit.js";
 import { AppError } from "../../core/errors.js";
@@ -24,7 +24,7 @@ const displayName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCa
 /**
  * One search box for everything. The receptionist types whatever the patient says:
  *  - digits (≥3)     → phone prefix, or phone/UHID ending (e.g. last 4 digits)
- *  - "HS-12" / UHID  → UHID match
+ *  - "OJ-12" / UHID  → UHID match
  *  - text            → name prefix on any word
  * Results rank exact phone/UHID first, then most recent visit, so the returning patient is the top hit.
  */
@@ -91,7 +91,7 @@ export async function quickRegister(db: Db, actor: Actor, input: unknown, force 
     }
     const facility = await q.query<{ uhid_prefix: string }>("select uhid_prefix from core.facility where id = 1");
     const id = uuidv7();
-    const uhid = await nextUhid(q, facility.rows[0]?.uhid_prefix ?? "HS-");
+    const uhid = await nextUhid(q, facility.rows[0]?.uhid_prefix ?? "OJ-");
     await q.query(
       `insert into core.patient (id, uhid, name, name_search, sex, phone, dob, dob_estimated, created_by, updated_by)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`,
