@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. Semantic names only (surface, ink, accent…), never raw colours in components,
+ * so themes (light, dark, high-contrast) are a token swap. All ink/surface pairs meet WCAG AA (≥4.5:1).
+ */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --line: #dfe3e8;
+  --ink: #16191d;
+  --ink-2: #4a525c;
+  --ink-3: #69727d;
+  --accent: #0b6b5d;          /* clinical teal */
+  --accent-ink: #ffffff;
+  --accent-soft: #e2f3f0;
+  --focus: #1f6feb;
+  --ok: #157f3b;
+  --ok-soft: #e3f5e9;
+  --warn: #8a5a00;
+  --warn-soft: #fff3d6;
+  --danger: #b42318;
+  --danger-soft: #fde8e7;
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1214;
+    --surface: #171b1f;
+    --surface-2: #1e2328;
+    --line: #2c333a;
+    --ink: #eef1f4;
+    --ink-2: #b8c0c8;
+    --ink-3: #8f99a3;
+    --accent: #3cc4ac;
+    --accent-ink: #062520;
+    --accent-soft: #12332e;
+    --focus: #6aa8ff;
+    --ok: #4fd17f;
+    --ok-soft: #12301d;
+    --warn: #f0b84a;
+    --warn-soft: #33270c;
+    --danger: #ff7b72;
+    --danger-soft: #3a1513;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1214; --surface: #171b1f; --surface-2: #1e2328; --line: #2c333a;
+  --ink: #eef1f4; --ink-2: #b8c0c8; --ink-3: #8f99a3;
+  --accent: #3cc4ac; --accent-ink: #062520; --accent-soft: #12332e; --focus: #6aa8ff;
+  --ok: #4fd17f; --ok-soft: #12301d; --warn: #f0b84a; --warn-soft: #33270c; --danger: #ff7b72; --danger-soft: #3a1513;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-focus: var(--focus);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --shadow-card: var(--shadow);
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* One clearly visible focus style everywhere, for keyboard-first use. */
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ── Printing: only the receipt prints, sized for 80 mm thermal printers (also fine on A4/A5). ── */
+.print-only { display: none; }
+@media print {
+  @page { size: 80mm auto; margin: 4mm; }
+  body { background: #fff; color: #000; font-size: 12px; }
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { display: block !important; position: absolute; inset: 0 auto auto 0; width: 72mm; }
+}
