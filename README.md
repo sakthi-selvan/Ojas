@@ -28,6 +28,13 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - **Storage:** passwords and PINs are hashed with scrypt, and session tokens are stored only as SHA-256. The session cookie is HttpOnly and SameSite=Strict.
 - **Discounts** need the Accounts or Administrator role. Every action is audited under the real user and desk.
 
+### Clinic setup
+
+- **First-run wizard:** right after the administrator account, three short steps: clinic details (printed on receipts), doctors with fees and consulting hours, then a summary. Nothing is pre-filled with demo data. Other roles see "still being set up" until it's finished.
+- **Doctors and timings:** up to 3 sessions a day (morning and evening clinics), set per weekday, with one-click presets and "Copy to Tue–Sat". Slot length is 5–60 minutes. Overlapping or too-short sessions are rejected, with the problem highlighted. Inactive doctors disappear from the front desk; their history stays.
+- **Holidays and leave:** a clinic holiday closes the day for everyone; doctor leave closes only that doctor's days. The front desk shows why ("Clinic closed: Pongal", "Dr. X is on leave (Conference), back Thu 26 Nov") and the server refuses bookings on those days. Adding one tells you how many patients are already booked, so they can be called.
+- **Settings page** (<kbd>Alt</kbd>+<kbd>8</kbd>, administrators): doctors and timings, holidays and leave, clinic details. Changes apply to new bookings only. The patient ID prefix locks after the first patient. Every change is in the audit trail.
+
 ## Run it
 
 Needs Node.js 22+ only.
@@ -40,6 +47,12 @@ Run the server and UI together, then open http://localhost:5173:
 
 ```powershell
 npm run dev
+```
+
+Or start with a demo clinic and four doctors already set up (skips the wizard on an empty database):
+
+```powershell
+npm run dev:demo
 ```
 
 Run the same, plus the Electron window:
@@ -66,13 +79,14 @@ npm run build; npm start -w @ojas/desktop
 | `OJAS_DB_URL` | Use real PostgreSQL instead of the embedded database | — |
 | `OJAS_DATA_DIR` | Embedded database folder | `apps/server/.data/db` in dev, `%ProgramData%\Ojas\data\db` in desktop |
 | `OJAS_WEB_DIR` | Built UI to serve to LAN browsers | — |
+| `OJAS_DEMO` | `1` fills an empty database with a demo clinic and doctors | — |
 
 Desktop mode is set in `%ProgramData%\Ojas\desktop.json`: `{"mode":"standalone"}` or `{"mode":"client","serverUrl":"http://192.168.1.10:4870"}`.
 
 ## Not done yet (next milestones)
 
-1. Setup wizard (facility details, doctors, fees, schedules) and masters screens. Doctors are seeded with demo data.
-2. Automatic encrypted backups with a backup-age banner, and restore.
-3. Installer (electron-builder), Windows Service for LAN servers with HTTPS (then the session cookie becomes `Secure`), LAN server auto-discovery, offline licensing.
+1. Automatic encrypted backups with a backup-age banner, and restore.
+2. Installer (electron-builder), Windows Service for LAN servers with HTTPS (then the session cookie becomes `Secure`), LAN server auto-discovery, offline licensing.
+3. Rescheduling bookings hit by a new holiday or leave, bill cancellation and refunds, and a day-end cash report.
 4. Admin-editable role permissions, and linking doctor accounts to their practitioner record ("my patients").
 5. Then the modules: Pharmacy, LIMS, OPD consultation/EMR, IPD.

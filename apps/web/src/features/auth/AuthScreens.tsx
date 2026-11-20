@@ -5,6 +5,7 @@ import { ROLE_LABEL, type SessionUser, type UserTile } from "@ojas/shared";
 import { api, ApiError } from "../../lib/api";
 import { forgetUser, recentUserIds, useAuth } from "../../lib/auth";
 import { Alert, Button, Field, Kbd, cx } from "../../components/ui";
+import { SetupWizard } from "../settings/SetupWizard";
 
 /** Decides what to show: setup on a new install, sign-in, a forced password change, or the app. */
 export function AuthGate({ children }: { children: ReactNode }) {
@@ -23,7 +24,23 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (status.needsSetup) return <SetupScreen />;
   if (!user) return <SignInScreen />;
   if (user.mustChangePassword) return <Centered><ForcedPasswordChange user={user} /></Centered>;
-  return <>{children}</>;
+  return <ClinicSetupGate>{children}</ClinicSetupGate>;
+}
+
+/** Until the clinic and its doctors are set up, administrators get the wizard and everyone else a short note. */
+function ClinicSetupGate({ children }: { children: ReactNode }) {
+  const { can, signOut } = useAuth();
+  const facility = useQuery({ queryKey: ["facility"], queryFn: api.facility, staleTime: Infinity });
+  if (!facility.data) return <Centered><p className="text-ink-3">{facility.error ? (facility.error as Error).message : "Loading…"}</p></Centered>;
+  if (facility.data.setupCompleted) return <>{children}</>;
+  if (can("settings.manage")) return <SetupWizard />;
+  return (
+    <Centered>
+      <Shell title="Ojas is still being set up" subtitle="An administrator needs to add the clinic's details and doctors first. Please check back shortly.">
+        <Button variant="secondary" onClick={() => void signOut()}>Sign out</Button>
+      </Shell>
+    </Centered>
+  );
 }
 
 function Centered({ children }: { children: ReactNode }) {
@@ -31,7 +48,7 @@ function Centered({ children }: { children: ReactNode }) {
 }
 
 function Brand() {
-  const facility = useQuery({ queryKey: ["facility-public"], queryFn: api.facility, retry: false, staleTime: Infinity });
+  const facility = useQuery({ queryKey: ["facility"], queryFn: api.facility, retry: false, staleTime: Infinity });
   return (
     <div className="mb-6 flex items-center gap-3">
       <span className="grid size-10 place-items-center rounded-xl bg-accent text-lg font-bold text-accent-ink" aria-hidden>
@@ -39,7 +56,7 @@ function Brand() {
       </span>
       <div>
         <div className="text-lg font-bold leading-tight">Ojas</div>
-        <div className="text-sm text-ink-2">{facility.data?.name ?? "Healthcare suite"}</div>
+        <div className="text-sm text-ink-2">{facility.data?.name || "Healthcare suite"}</div>
       </div>
     </div>
   );

@@ -6,7 +6,7 @@ import { uuidv7 } from "../../core/ids.js";
 import { localDate } from "../../core/clock.js";
 import { nextInvoiceNo, nextToken } from "../../core/numbering.js";
 import { getPatient } from "./patients.js";
-import { getPractitioner, isOnGrid } from "./scheduling.js";
+import { dayGrid, getPractitioner } from "./scheduling.js";
 
 /**
  * Front-desk checkout: book the slot, raise the invoice and record the payment as one atomic unit.
@@ -29,7 +29,11 @@ export async function checkout(db: Db, actor: Actor, input: unknown, now = new D
       const patient = await getPatient(q, v.patientId);
       const doctor = await getPractitioner(q, v.practitionerId);
 
-      if (!isOnGrid(doctor, visitDate, slotStart)) {
+      // Re-check the schedule inside the transaction: holidays, leave and session times may have
+      // changed since the receptionist loaded the slot list.
+      const grid = await dayGrid(q, doctor, visitDate);
+      if (grid.closed) throw new AppError(422, "day_closed", grid.closed);
+      if (!grid.starts.includes(slotStart.getTime())) {
         throw new AppError(422, "invalid_slot", "That time is outside the doctor's schedule. Pick a slot from the list.");
       }
       if (slotStart.getTime() + doctor.slotMinutes * 60_000 <= now.getTime()) {
@@ -103,8 +107,10 @@ export async function checkout(db: Db, actor: Actor, input: unknown, now = new D
 }
 
 async function facility(q: Queryable): Promise<Receipt["facility"]> {
-  const { rows } = await q.query<{ name: string; address: string; phone: string }>("select name, address, phone from core.facility where id = 1");
-  return rows[0] ?? { name: "Ojas", address: "", phone: "" };
+  const { rows } = await q.query<Receipt["facility"]>(
+    `select name, address, phone, gstin, receipt_footer as "receiptFooter" from core.facility where id = 1`,
+  );
+  return rows[0] ?? { name: "Ojas", address: "", phone: "", gstin: "", receiptFooter: "" };
 }
 
 /** Reprint: rebuild the receipt from the stored, immutable invoice records. */

@@ -6,6 +6,8 @@
 import { z } from "zod";
 
 export * from "./auth";
+export * from "./settings";
+import type { Session } from "./settings";
 
 // ───────────────────────── Primitives ─────────────────────────
 
@@ -65,18 +67,26 @@ export interface Practitioner {
   id: string;
   name: string;
   department: string;
+  qualification: string;
+  registrationNo: string;
+  phone: string;
   consultationFee: Paise;
   slotMinutes: number;
-  /** "09:00" */
-  dayStart: string;
-  /** "13:00" */
-  dayEnd: string;
+  /** Weekly consulting sessions, e.g. Mon 09:00–13:00 and Mon 17:00–20:00. */
+  sessions: Session[];
+  active: boolean;
 }
 
 export interface Slot {
   /** ISO timestamp */
   start: string;
   available: boolean;
+}
+
+/** A doctor's day: bookable slots, or why there are none (holiday, leave, not a consulting day). */
+export interface DaySlots {
+  slots: Slot[];
+  closed?: string;
 }
 
 // ───────────────────────── Front desk checkout ─────────────────────────
@@ -117,7 +127,7 @@ export interface Receipt {
   discount: Paise;
   total: Paise;
   paymentMode: PaymentMode;
-  facility: { name: string; address: string; phone: string };
+  facility: { name: string; address: string; phone: string; gstin: string; receiptFooter: string };
 }
 
 // ───────────────────────── Queue ─────────────────────────

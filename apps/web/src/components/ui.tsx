@@ -1,4 +1,4 @@
-import { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 export { cx };
@@ -73,6 +73,28 @@ export const Field = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     );
   },
 );
+
+/** Label + native select, styled like Field. */
+export function Select({ label, error, hint, className, id, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement> & { label: string; error?: string; hint?: string }) {
+  const autoId = useId();
+  const selectId = id ?? autoId;
+  const msgId = `${selectId}-msg`;
+  return (
+    <div className={cx("flex flex-col gap-1", className)}>
+      <label htmlFor={selectId} className="text-sm font-medium text-ink-2">{label}</label>
+      <select
+        id={selectId}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error || hint ? msgId : undefined}
+        className={cx("min-h-11 rounded-lg border bg-surface px-3 text-base text-ink", error ? "border-danger" : "border-line")}
+        {...rest}
+      >
+        {children}
+      </select>
+      {(error || hint) && <p id={msgId} className={cx("text-sm", error ? "text-danger" : "text-ink-3")}>{error ?? hint}</p>}
+    </div>
+  );
+}
 
 /** Accessible radio group shown as a segmented control. Arrow keys move; each option can have a hotkey. */
 export function Segmented<T extends string>({

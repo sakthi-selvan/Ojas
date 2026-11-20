@@ -179,6 +179,56 @@ export const migrations: { id: number; name: string; sql: string }[] = [
       create index session_user_idx on core.session (user_id);
     `,
   },
+  {
+    id: 3,
+    name: "clinic_setup_schedules",
+    sql: `
+      alter table core.facility
+        add column email           text not null default '',
+        add column gstin           text not null default '',
+        add column receipt_footer  text not null default 'Get well soon',
+        add column setup_completed boolean not null default false;
+      -- Installations that already exist are in use, so they skip the first-run wizard.
+      update core.facility set setup_completed = true;
+
+      alter table core.practitioner
+        add column qualification   text not null default '',
+        add column registration_no text not null default '',
+        add column phone           text not null default '';
+
+      -- Weekly consulting sessions: several per day (morning / evening clinics are common).
+      create table core.practitioner_session (
+        id              uuid primary key,
+        practitioner_id uuid not null references core.practitioner(id),
+        weekday         smallint not null check (weekday between 0 and 6),
+        start_time      time not null,
+        end_time        time not null,
+        check (start_time < end_time)
+      );
+      create index practitioner_session_idx on core.practitioner_session (practitioner_id, weekday);
+      -- Carry over the old single daily range, every day of the week, exactly as it behaved before.
+      insert into core.practitioner_session (id, practitioner_id, weekday, start_time, end_time)
+        select gen_random_uuid(), p.id, d, p.day_start, p.day_end from core.practitioner p, generate_series(0, 6) d;
+      alter table core.practitioner drop column day_start, drop column day_end;
+
+      create table core.holiday (
+        date date primary key,
+        name text not null,
+        ${meta}
+      );
+
+      create table core.practitioner_leave (
+        id              uuid primary key,
+        practitioner_id uuid not null references core.practitioner(id),
+        from_date       date not null,
+        to_date         date not null,
+        reason          text not null default '',
+        check (from_date <= to_date),
+        ${meta}
+      );
+      create index practitioner_leave_idx on core.practitioner_leave (practitioner_id, from_date, to_date);
+    `,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

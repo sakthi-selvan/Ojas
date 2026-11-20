@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"npm:dev -w @ojas/server\" \"npm:dev -w @ojas/web\"",
+    "dev:demo": "concurrently -n server,web -c blue,green \"npm:dev:demo -w @ojas/server\" \"npm:dev -w @ojas/web\"",
     "dev:desktop": "concurrently -n server,web,desktop -c blue,green,magenta \"npm:dev -w @ojas/server\" \"npm:dev -w @ojas/web\" \"npm:dev -w @ojas/desktop\"",
     "build": "npm run build -w @ojas/web && npm run build -w @ojas/server && npm run build -w @ojas/desktop",
     "typecheck": "npm run typecheck --workspaces --if-present",

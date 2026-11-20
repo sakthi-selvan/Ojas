@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardList, Stethoscope, FlaskConical, Pill, BedDouble, Wifi, WifiOff, Users, Lock, LogOut, KeyRound, ChevronDown } from "lucide-react";
+import { ClipboardList, Stethoscope, FlaskConical, Pill, BedDouble, Wifi, WifiOff, Users, Lock, LogOut, KeyRound, ChevronDown, Settings } from "lucide-react";
 import { ROLE_LABEL, type Permission } from "@ojas/shared";
 import { api } from "./lib/api";
 import { useAuth } from "./lib/auth";
@@ -9,15 +9,17 @@ import { useHotkeys } from "./lib/hotkeys";
 import { FrontDesk } from "./features/front-desk/FrontDesk";
 import { QueueBoard } from "./features/queue/QueueBoard";
 import { UsersPage } from "./features/admin/UsersPage";
+import { SettingsPage } from "./features/settings/SettingsPage";
 import { CredentialsForm } from "./features/auth/AuthScreens";
 import { Kbd, cx } from "./components/ui";
 
-type Page = "front-desk" | "queue" | "users";
+type Page = "front-desk" | "queue" | "settings" | "users";
 
 /** Each page appears only for roles that can use it. */
 const nav: { id: Page; label: string; icon: typeof ClipboardList; key: string; perm?: Permission }[] = [
   { id: "front-desk", label: "Front desk", icon: ClipboardList, key: "Alt+1", perm: "appointments.book" },
   { id: "queue", label: "OPD queue", icon: Stethoscope, key: "Alt+2" },
+  { id: "settings", label: "Settings", icon: Settings, key: "Alt+8", perm: "settings.manage" },
   { id: "users", label: "Users", icon: Users, key: "Alt+9", perm: "users.manage" },
 ];
 
@@ -51,13 +53,15 @@ export function App() {
           </span>
           <span className="hidden max-w-48 truncate whitespace-nowrap md:inline" title={facility.data?.name}>{facility.data?.name ?? "Ojas"}</span>
         </div>
-        <nav aria-label="Main" className="flex min-w-0 items-center gap-1 overflow-x-auto">
+        <nav aria-label="Main" className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
           {pages.map((n) => (
             <button
               key={n.id}
               type="button"
               aria-current={page === n.id ? "page" : undefined}
               aria-keyshortcuts={n.key}
+              title={`${n.label} (${n.key})`}
+              aria-label={n.label}
               onClick={() => setPage(n.id)}
               className={cx(
                 "flex min-h-9 items-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-medium",
@@ -65,8 +69,8 @@ export function App() {
               )}
             >
               <n.icon aria-hidden className="size-4" />
-              {n.label}
-              <Kbd className="hidden 2xl:inline-flex">{n.key}</Kbd>
+              <span className="hidden xl:inline">{n.label}</span>
+              <span className="hidden 2xl:inline"><Kbd>{n.key}</Kbd></span>
             </button>
           ))}
           {upcoming.map((u) => (
@@ -83,7 +87,7 @@ export function App() {
         </div>
       </header>
       <main id="main" className="flex-1">
-        {page === "front-desk" ? <FrontDesk /> : page === "users" ? <UsersPage /> : <QueueBoard />}
+        {page === "front-desk" ? <FrontDesk /> : page === "users" ? <UsersPage /> : page === "settings" ? <SettingsPage /> : <QueueBoard />}
       </main>
     </div>
   );

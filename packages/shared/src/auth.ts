@@ -25,6 +25,7 @@ export const PERMISSIONS = [
   "billing.discount",
   "queue.update",
   "users.manage",
+  "settings.manage",
   "audit.verify",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];

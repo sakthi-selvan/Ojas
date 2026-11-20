@@ -48,7 +48,7 @@ export function DoctorStep({
   }, [doctors.data, doctorId, onChange]);
 
   // Keep a valid slot selected: if none (or it was just taken), jump to the next free one.
-  const free = useMemo(() => (slots.data ?? []).filter((s) => s.available), [slots.data]);
+  const free = useMemo(() => (slots.data?.slots ?? []).filter((s) => s.available), [slots.data]);
   useEffect(() => {
     if (!doctorId || !slots.data) return;
     if (!slotStart || !free.some((s) => s.start === slotStart)) {
@@ -79,6 +79,9 @@ export function DoctorStep({
     <div ref={box} className="flex flex-col gap-4" onKeyDown={onKeyDown}>
       {notice && <Alert tone="warn">{notice}</Alert>}
       {doctors.error && <Alert tone="danger">{(doctors.error as Error).message}</Alert>}
+      {doctors.data?.length === 0 && (
+        <Alert tone="warn">No doctors are set up yet. An administrator can add them in Settings → Doctors.</Alert>
+      )}
 
       <fieldset>
         <legend className="mb-2 text-sm font-medium text-ink-2">Doctor</legend>
@@ -118,7 +121,13 @@ export function DoctorStep({
             <span className="ml-auto font-normal text-ink-3">{free.length} free · {selected.slotMinutes} min slots</span>
           </legend>
           {slots.isLoading && <p className="text-sm text-ink-3">Loading slots…</p>}
-          {slots.data && free.length === 0 && <Alert tone="warn">{selected.name} has no free slots left today. Choose another doctor.</Alert>}
+          {slots.data?.closed && (
+            <Alert tone="warn">
+              {slots.data.closed}.{" "}
+              {slots.data.closed.startsWith("Clinic closed") ? "No appointments can be booked today." : "Choose another doctor."}
+            </Alert>
+          )}
+          {slots.data && !slots.data.closed && free.length === 0 && <Alert tone="warn">{selected.name} has no free slots left today. Choose another doctor.</Alert>}
           <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto p-0.5">
             {free.slice(0, 48).map((s) => {
               const checked = s.start === slotStart;

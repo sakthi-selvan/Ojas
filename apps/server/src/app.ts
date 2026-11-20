@@ -16,6 +16,7 @@ import { listPractitioners, slotsFor } from "./modules/front-desk/scheduling.js"
 import { checkout, getReceipt } from "./modules/front-desk/checkout.js";
 import { queueFor, setStatus } from "./modules/front-desk/queue.js";
 import * as auth from "./modules/auth/service.js";
+import * as settings from "./modules/settings/service.js";
 
 export interface AppOptions {
   db: Db;
@@ -132,9 +133,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.get("/api/health", pub, async () => ({ ok: true, engine: db.engine, serverTime: now().toISOString(), clients: realtime.size }));
   app.get("/api/events", { websocket: true }, (socket) => realtime.add(socket));
   app.get("/api/audit/verify", need("audit.verify"), async () => verifyAuditChain(db));
-  app.get("/api/facility", pub, async () =>
-    (await db.query("select name, address, phone from core.facility where id = 1")).rows[0],
-  );
+  app.get("/api/facility", pub, async () => settings.publicFacility(db));
 
   // ── Auth ──
   app.get("/api/auth/status", pub, async (req) => auth.authStatus(db, req.session));
@@ -171,6 +170,31 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.patch<{ Params: { id: string } }>("/api/users/:id", need("users.manage"), async (req) =>
     auth.updateUser(db, actorOf(req), req.session!.user.id, req.params.id, req.body),
   );
+
+  // ── Settings (clinic, doctors, holidays, leave) ──
+  const manage = need("settings.manage");
+  app.get("/api/settings/facility", manage, async () => settings.getFacility(db));
+  app.put("/api/settings/facility", manage, async (req) => settings.updateFacility(db, actorOf(req), req.body));
+  app.post("/api/settings/complete-setup", manage, async (req) => settings.completeSetup(db, actorOf(req)));
+  app.get("/api/settings/practitioners", manage, async () => listPractitioners(db, { includeInactive: true }));
+  app.post("/api/settings/practitioners", manage, async (req, reply) =>
+    reply.status(201).send(await settings.createPractitioner(db, actorOf(req), req.body)),
+  );
+  app.put<{ Params: { id: string } }>("/api/settings/practitioners/:id", manage, async (req) =>
+    settings.updatePractitioner(db, actorOf(req), req.params.id, req.body),
+  );
+  app.get("/api/settings/holidays", manage, async () => settings.listHolidays(db, localDate(now())));
+  app.post("/api/settings/holidays", manage, async (req, reply) => reply.status(201).send(await settings.addHoliday(db, actorOf(req), req.body)));
+  app.delete<{ Params: { date: string } }>("/api/settings/holidays/:date", manage, async (req) => {
+    await settings.deleteHoliday(db, actorOf(req), dateParam(req.params.date));
+    return { ok: true };
+  });
+  app.get("/api/settings/leaves", manage, async () => settings.listLeaves(db, localDate(now())));
+  app.post("/api/settings/leaves", manage, async (req, reply) => reply.status(201).send(await settings.addLeave(db, actorOf(req), req.body)));
+  app.delete<{ Params: { id: string } }>("/api/settings/leaves/:id", manage, async (req) => {
+    await settings.deleteLeave(db, actorOf(req), req.params.id);
+    return { ok: true };
+  });
 
   // ── Patients ──
   app.get<{ Querystring: { q?: string } }>("/api/patients/search", need("patients.read"), async (req) => searchPatients(db, req.query.q ?? ""));

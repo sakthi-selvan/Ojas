@@ -1,6 +1,6 @@
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import { openDb, type Db } from "../src/db/index.js";
-import { seedIfEmpty } from "../src/db/seed.js";
+import { ensureFacility, seedDemo } from "../src/db/seed.js";
 import { buildApp, SESSION_COOKIE } from "../src/app.js";
 
 export const ADMIN = { displayName: "Asha Admin", username: "admin", password: "correct-horse-1" };
@@ -23,9 +23,10 @@ export class Client {
   patch = (url: string, payload: object) => this.req({ method: "PATCH", url, payload });
 }
 
-export async function makeApp(now: () => Date = () => new Date()): Promise<{ db: Db; app: FastifyInstance; anon: () => Client }> {
+export async function makeApp(now: () => Date = () => new Date(), opts: { demo?: boolean } = { demo: true }): Promise<{ db: Db; app: FastifyInstance; anon: () => Client }> {
   const db = await openDb({});
-  await seedIfEmpty(db);
+  if (opts.demo) await seedDemo(db);
+  else await ensureFacility(db);
   const app = await buildApp({ db, now });
   return { db, app, anon: () => new Client(app) };
 }

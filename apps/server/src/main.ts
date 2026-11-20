@@ -1,14 +1,16 @@
 import { mkdirSync } from "node:fs";
 import { loadConfig } from "./config.js";
 import { openDb } from "./db/index.js";
-import { seedIfEmpty } from "./db/seed.js";
+import { ensureFacility, seedDemo } from "./db/seed.js";
 import { buildApp } from "./app.js";
 
 const config = loadConfig();
 if (!config.dbUrl) mkdirSync(config.dataDir, { recursive: true });
 
 const db = await openDb({ url: config.dbUrl, dataDir: config.dbUrl ? undefined : config.dataDir });
-await seedIfEmpty(db);
+await ensureFacility(db);
+// OJAS_DEMO=1 (npm run dev:demo) fills an empty database with a demo clinic and doctors.
+if (process.env.OJAS_DEMO === "1") await seedDemo(db);
 const app = await buildApp({ db, webDir: config.webDir, logger: true });
 
 await app.listen({ port: config.port, host: config.host });

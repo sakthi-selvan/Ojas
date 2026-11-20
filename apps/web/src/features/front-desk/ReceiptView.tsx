@@ -68,7 +68,8 @@ export function PrintableReceipt({ r }: { r: Receipt }) {
       <div className="text-center">
         <div className="text-[14px] font-bold">{r.facility.name}</div>
         <div>{r.facility.address}</div>
-        <div>Ph: {r.facility.phone}</div>
+        {r.facility.phone && <div>Ph: {r.facility.phone}</div>}
+        {r.facility.gstin && <div>GSTIN: {r.facility.gstin}</div>}
       </div>
       <hr className="my-1 border-dashed border-black" />
       <div className="text-center">
@@ -93,8 +94,12 @@ export function PrintableReceipt({ r }: { r: Receipt }) {
         <div className="flex justify-between"><span>Discount</span><span>-{formatINR(r.discount)}</span></div>
       )}
       <div className="flex justify-between font-bold"><span>TOTAL ({modeLabel[r.paymentMode]})</span><span>{formatINR(r.total)}</span></div>
-      <hr className="my-1 border-dashed border-black" />
-      <div className="text-center">Get well soon</div>
+      {r.facility.receiptFooter && (
+        <>
+          <hr className="my-1 border-dashed border-black" />
+          <div className="text-center">{r.facility.receiptFooter}</div>
+        </>
+      )}
     </div>
   );
 }

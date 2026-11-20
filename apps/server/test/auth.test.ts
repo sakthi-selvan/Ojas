@@ -138,7 +138,7 @@ describe("roles", () => {
     expect((await rx.get("/api/users")).statusCode).toBe(403);
     const patient = (await rx.post("/api/patients", { name: "Kavya", sex: "F", phone: "9000000123", ageYears: 30 })).json();
     const doctor = (await rx.get("/api/practitioners")).json()[0];
-    const slot = (await rx.get(`/api/practitioners/${doctor.id}/slots?date=2026-11-20`)).json().find((s: { available: boolean }) => s.available);
+    const slot = (await rx.get(`/api/practitioners/${doctor.id}/slots?date=2026-11-20`)).json().slots.find((s: { available: boolean }) => s.available);
     const base = { patientId: patient.id, practitionerId: doctor.id, slotStart: slot.start, paymentMode: "CASH" };
     const withDiscount = await rx.post("/api/front-desk/checkout", { ...base, discount: 5_000, idempotencyKey: randomUUID() });
     expect(withDiscount.json().code).toBe("discount_not_allowed");

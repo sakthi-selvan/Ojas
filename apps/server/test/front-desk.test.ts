@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, InjectOptions } from "fastify";
-import type { Practitioner, Patient, Receipt, Slot } from "@ojas/shared";
+import type { DaySlots, Practitioner, Patient, Receipt, Slot } from "@ojas/shared";
 import type { Db } from "../src/db/index.js";
 import { financialYear } from "../src/core/numbering.js";
 import { makeApp, setupAdmin, type Client } from "./helpers.js";
@@ -31,7 +31,7 @@ const register = (body: object, force = false) =>
 
 const firstFreeSlot = async (): Promise<Slot> => {
   const res = await app.inject({ url: `/api/practitioners/${doctor.id}/slots?date=2026-11-20` });
-  return (res.json() as Slot[]).find((s) => s.available)!;
+  return (res.json() as DaySlots).slots.find((s) => s.available)!;
 };
 
 describe("quick registration", () => {
