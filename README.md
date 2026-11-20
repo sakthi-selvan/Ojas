@@ -35,6 +35,16 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - **Holidays and leave:** a clinic holiday closes the day for everyone; doctor leave closes only that doctor's days. The front desk shows why ("Clinic closed: Pongal", "Dr. X is on leave (Conference), back Thu 26 Nov") and the server refuses bookings on those days. Adding one tells you how many patients are already booked, so they can be called.
 - **Settings page** (<kbd>Alt</kbd>+<kbd>8</kbd>, administrators): doctors and timings, holidays and leave, clinic details. Changes apply to new bookings only. The patient ID prefix locks after the first patient. Every change is in the audit trail.
 
+### Backups
+
+- **Encrypted:** each backup is one `.ojasbak` file with the whole database, encrypted with AES-256-GCM using a key derived (scrypt) from a backup password the administrator sets once. The clinic name and date stay readable, so backups can be listed without the password.
+- **Two places:** a main folder (default: `backups` next to the database) and a second copy, ideally on a USB drive or another disk. Each file is read back and decrypted after writing. If the USB copy fails, the backup still counts and a warning shows.
+- **Automatic:** every 1–24 hours (default 4) while Ojas runs, starting about a minute after start-up if one is due. "Back up now" is one click. The newest 30 are kept in each folder (adjustable).
+- **Warnings:** administrators see a banner on every screen when backups are off, the last one failed, or the newest is over a day old.
+- **One-step restore** (Settings → Backups): type RESTORE to confirm. A safety backup of the current data is taken first, so a restore can be undone. Everyone is signed out. This install's backup settings and history are kept.
+- **New or rebuilt PC:** the first-run screen offers "Restore from a backup": point it at the USB folder and enter the backup password.
+- **External PostgreSQL** (hospital LAN servers) is backed up with PostgreSQL's own tools instead.
+
 ## Run it
 
 Needs Node.js 22+ only.
@@ -79,14 +89,14 @@ npm run build; npm start -w @ojas/desktop
 | `OJAS_DB_URL` | Use real PostgreSQL instead of the embedded database | — |
 | `OJAS_DATA_DIR` | Embedded database folder | `apps/server/.data/db` in dev, `%ProgramData%\Ojas\data\db` in desktop |
 | `OJAS_WEB_DIR` | Built UI to serve to LAN browsers | — |
+| `OJAS_BACKUP_DIR` | Default main backup folder | `backups` beside the database folder |
 | `OJAS_DEMO` | `1` fills an empty database with a demo clinic and doctors | — |
 
 Desktop mode is set in `%ProgramData%\Ojas\desktop.json`: `{"mode":"standalone"}` or `{"mode":"client","serverUrl":"http://192.168.1.10:4870"}`.
 
 ## Not done yet (next milestones)
 
-1. Automatic encrypted backups with a backup-age banner, and restore.
-2. Installer (electron-builder), Windows Service for LAN servers with HTTPS (then the session cookie becomes `Secure`), LAN server auto-discovery, offline licensing.
-3. Rescheduling bookings hit by a new holiday or leave, bill cancellation and refunds, and a day-end cash report.
-4. Admin-editable role permissions, and linking doctor accounts to their practitioner record ("my patients").
-5. Then the modules: Pharmacy, LIMS, OPD consultation/EMR, IPD.
+1. Installer (electron-builder), Windows Service for LAN servers with HTTPS (then the session cookie becomes `Secure`), LAN server auto-discovery, offline licensing.
+2. Rescheduling bookings hit by a new holiday or leave, bill cancellation and refunds, and a day-end cash report.
+3. Admin-editable role permissions, and linking doctor accounts to their practitioner record ("my patients").
+4. Then the modules: Pharmacy, LIMS, OPD consultation/EMR, IPD.

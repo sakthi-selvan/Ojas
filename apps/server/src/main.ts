@@ -11,7 +11,8 @@ const db = await openDb({ url: config.dbUrl, dataDir: config.dbUrl ? undefined :
 await ensureFacility(db);
 // OJAS_DEMO=1 (npm run dev:demo) fills an empty database with a demo clinic and doctors.
 if (process.env.OJAS_DEMO === "1") await seedDemo(db);
-const app = await buildApp({ db, webDir: config.webDir, logger: true });
+const app = await buildApp({ db, webDir: config.webDir, logger: true, backupDir: config.backupDir });
+app.backups.start(); // scheduled backups, once the administrator has set them up
 
 await app.listen({ port: config.port, host: config.host });
 app.log.info(`Ojas server ready (${db.engine}) on http://${config.host}:${config.port}`);
@@ -22,6 +23,7 @@ const shutdown = async (signal: string) => {
   if (closing) return;
   closing = true;
   app.log.info(`${signal} received, shutting down`);
+  app.backups.stop();
   await app.close();
   await db.close();
   process.exit(0);

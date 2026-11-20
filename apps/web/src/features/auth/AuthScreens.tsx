@@ -6,6 +6,7 @@ import { api, ApiError } from "../../lib/api";
 import { forgetUser, recentUserIds, useAuth } from "../../lib/auth";
 import { Alert, Button, Field, Kbd, cx } from "../../components/ui";
 import { SetupWizard } from "../settings/SetupWizard";
+import { RestorePanel } from "../backup/RestorePanel";
 
 /** Decides what to show: setup on a new install, sign-in, a forced password change, or the app. */
 export function AuthGate({ children }: { children: ReactNode }) {
@@ -78,6 +79,33 @@ const fieldErrors = (e: unknown): Record<string, string> => (e instanceof ApiErr
 // ───────────────────────── First run ─────────────────────────
 
 function SetupScreen() {
+  const [restoring, setRestoring] = useState(false);
+  return restoring ? <RestoreInsteadOfSetup onBack={() => setRestoring(false)} /> : <NewSetup onRestore={() => setRestoring(true)} />;
+}
+
+/** Disaster recovery: a new or rebuilt PC starts from the clinic's last backup instead of empty. */
+function RestoreInsteadOfSetup({ onBack }: { onBack: () => void }) {
+  const [done, setDone] = useState(false);
+  return (
+    <Centered>
+      <Shell title="Restore from a backup" subtitle="Connect the USB drive or disk with your Ojas backups, then type its folder. Everything comes back: patients, bills, doctors, staff accounts and settings." wide>
+        {done ? (
+          <Alert tone="ok">Restored. Opening sign-in…</Alert>
+        ) : (
+          <RestorePanel
+            list={api.setupBackupFiles}
+            restore={api.setupRestore}
+            defaultFolderHint="Type the backup folder, for example E:\OjasBackups"
+            onRestored={() => { setDone(true); setTimeout(() => window.location.reload(), 800); }}
+          />
+        )}
+        <Button variant="ghost" onClick={onBack} disabled={done}>Back to new setup</Button>
+      </Shell>
+    </Centered>
+  );
+}
+
+function NewSetup({ onRestore }: { onRestore: () => void }) {
   const { signedIn } = useAuth();
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("admin");
@@ -111,6 +139,10 @@ function SetupScreen() {
           </div>
           {setup.error && !Object.keys(errs).length && <div className="sm:col-span-2"><Alert tone="danger">{setup.error.message}</Alert></div>}
         </form>
+        <p className="border-t border-line pt-4 text-sm text-ink-2">
+          Moving to a new PC, or recovering after a disk failure?{" "}
+          <button type="button" className="font-semibold text-accent underline-offset-2 hover:underline" onClick={onRestore}>Restore from a backup</button>
+        </p>
       </Shell>
     </Centered>
   );

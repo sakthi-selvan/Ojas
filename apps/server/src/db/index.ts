@@ -9,6 +9,7 @@
  */
 import { PGlite } from "@electric-sql/pglite";
 import pg from "pg";
+import { existsSync, renameSync, rmSync } from "node:fs";
 import { migrate } from "./migrations.js";
 
 export interface Queryable {
@@ -22,6 +23,17 @@ export interface Db extends Queryable {
   tx<T>(fn: (q: Queryable) => Promise<T>): Promise<T>;
   close(): Promise<void>;
   readonly engine: "pglite" | "postgres";
+  /**
+   * Embedded engine only: a consistent gzip'd tarball of the whole database folder (for backups).
+   * The external PostgreSQL engine is backed up with the server's own tools (pg_dump, replication).
+   */
+  snapshot?(): Promise<Uint8Array>;
+  /**
+   * Embedded engine only: replace the live database with a snapshot. New queries wait, queries in
+   * flight finish first, then the swap happens and migrations bring the snapshot up to date.
+   * The previous folder is kept beside it as `<dataDir>.replaced-<time>` until the swap succeeds.
+   */
+  replaceFrom?(snapshot: Uint8Array): Promise<void>;
 }
 
 // Normalise types so both engines return identical JS values:
@@ -38,22 +50,86 @@ export async function openDb(opts: { url?: string; dataDir?: string }): Promise<
 }
 
 async function openPglite(dataDir?: string): Promise<Db> {
-  const lite = await PGlite.create({
-    // undefined = in-memory (tests)
-    dataDir,
-    parsers: { [INT8]: Number, [DATE]: (v: string) => v, [TIMESTAMPTZ]: parseTimestamptz },
+  const create = (loadDataDir?: Blob) =>
+    PGlite.create({
+      // undefined = in-memory (tests)
+      dataDir,
+      loadDataDir,
+      parsers: { [INT8]: Number, [DATE]: (v: string) => v, [TIMESTAMPTZ]: parseTimestamptz },
+    });
+  let lite = await create();
+
+  // A gate so a restore can swap the database safely: callers wait while it is closed, and the
+  // swap waits until no call is still running.
+  let gate: Promise<void> = Promise.resolve();
+  let inFlight = 0;
+  let idle: (() => void) | undefined;
+  const run = async <T>(fn: () => Promise<T>): Promise<T> => {
+    await gate;
+    inFlight++;
+    try {
+      return await fn();
+    } finally {
+      if (--inFlight === 0) idle?.();
+    }
+  };
+  const wrap = (q: { query: PGlite["query"]; exec: PGlite["exec"] }): Queryable => ({
+    query: async (sql, params) => ({ rows: (await q.query(sql, params)).rows as never[] }),
+    exec: async (sql) => void (await q.exec(sql)),
   });
+
+  const db: Db = {
+    engine: "pglite",
+    query: (sql, params) => run(() => wrap(lite).query(sql, params)),
+    exec: (sql) => run(() => wrap(lite).exec(sql)),
+    tx: (fn) => run(() => lite.transaction((t) => fn(wrap(t)))),
+    close: () => lite.close(),
+    snapshot: () => run(async () => new Uint8Array(await (await lite.dumpDataDir("gzip")).arrayBuffer())),
+    replaceFrom: async (snapshot) => {
+      let open!: () => void;
+      const previous = gate;
+      gate = new Promise((r) => (open = r));
+      try {
+        await previous;
+        if (inFlight > 0) await new Promise<void>((r) => (idle = r));
+        idle = undefined;
+        await lite.close();
+        const aside = dataDir && existsSync(dataDir) ? `${dataDir}.replaced-${Date.now()}` : undefined;
+        if (aside) renameSync(dataDir!, aside);
+        try {
+          lite = await create(new Blob([snapshot as BlobPart]));
+          await migrate(wrapDb(lite));
+        } catch (e) {
+          // The snapshot didn't open: put the previous database back exactly as it was.
+          await lite.close().catch(() => {});
+          if (aside) {
+            if (existsSync(dataDir!)) rmSync(dataDir!, { recursive: true, force: true });
+            renameSync(aside, dataDir!);
+          }
+          lite = await create();
+          throw e;
+        }
+      } finally {
+        open();
+      }
+    },
+  };
+  return db;
+}
+
+/** A bare Db over one PGlite instance, for running migrations during a swap (bypasses the gate). */
+function wrapDb(lite: PGlite): Db {
+  const q = {
+    query: async (sql: string, params?: unknown[]) => ({ rows: (await lite.query(sql, params)).rows as never[] }),
+    exec: async (sql: string) => void (await lite.exec(sql)),
+  };
   return {
     engine: "pglite",
-    query: async (sql, params) => ({ rows: (await lite.query(sql, params)).rows as never[] }),
-    exec: async (sql) => void (await lite.exec(sql)),
-    tx: (fn) =>
-      lite.transaction((t) =>
-        fn({
-          query: async (sql, params) => ({ rows: (await t.query(sql, params)).rows as never[] }),
-          exec: async (sql) => void (await t.exec(sql)),
-        }),
-      ),
+    ...q,
+    tx: (fn) => lite.transaction((t) => fn({
+      query: async (sql, params) => ({ rows: (await t.query(sql, params)).rows as never[] }),
+      exec: async (sql) => void (await t.exec(sql)),
+    })),
     close: () => lite.close(),
   };
 }

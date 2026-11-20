@@ -1,5 +1,6 @@
 import type {
   CheckoutInput, Patient, PatientSearchResult, Practitioner, QueueItem, QuickRegisterInput, Receipt, DaySlots, AppointmentStatus,
+  BackupStatus, BackupConfigInput, BackupRun, BackupFile, RestoreInput, RestoreResult,
   Facility, FacilityInput, PublicFacility, PractitionerInput, Holiday, HolidayInput, Leave, LeaveInput,
   AuthStatus, SessionUser, LoginInput, PinLoginInput, SetupInput, ChangeCredentialsInput, UserTile, UserSummary, CreateUserInput, UpdateUserInput,
 } from "@ojas/shared";
@@ -86,6 +87,17 @@ export const api = {
   addLeave: (input: LeaveInput) => request<{ leave: Leave; bookedPatients: number }>("POST", "/settings/leaves", input),
   deleteLeave: (id: string) => request<{ ok: true }>("DELETE", `/settings/leaves/${id}`),
 
+  // Backups (administrator)
+  backupStatus: () => request<BackupStatus>("GET", "/backups/status"),
+  saveBackupConfig: (input: BackupConfigInput) => request<BackupStatus>("PUT", "/backups/config", input),
+  backupNow: () => request<BackupRun>("POST", "/backups/run"),
+  backupRuns: () => request<BackupRun[]>("GET", "/backups/runs"),
+  backupFiles: (folder?: string) => request<BackupFile[]>("GET", `/backups/files${folder ? `?folder=${encodeURIComponent(folder)}` : ""}`),
+  restore: (input: RestoreInput) => request<RestoreResult>("POST", "/backups/restore", input),
+  // Before first-run setup (disaster recovery on a new PC)
+  setupBackupFiles: (folder?: string) => request<BackupFile[]>("GET", `/setup/backups${folder ? `?folder=${encodeURIComponent(folder)}` : ""}`),
+  setupRestore: (input: RestoreInput) => request<RestoreResult>("POST", "/setup/restore", input),
+
   // Users
   users: () => request<UserSummary[]>("GET", "/users"),
   createUser: (input: CreateUserInput) => request<UserSummary>("POST", "/users", input),
@@ -100,6 +112,23 @@ export const today = (): string => {
 /** "Mon, 24 Nov 2026" for an ISO date, read in local time. */
 export const dateLabel = (date: string): string =>
   new Date(`${date}T12:00:00`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+
+/** "3 hours ago", "2 days ago", "just now". */
+export const agoLabel = (iso: string, now = Date.now()): string => {
+  const min = Math.round((now - Date.parse(iso)) / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  if (h < 48) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  return `${Math.round(h / 24)} days ago`;
+};
+
+export const sizeLabel = (bytes: number): string =>
+  bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
+/** "20 Nov 2026, 2:30 pm" */
+export const dateTimeLabel = (iso: string): string =>
+  new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 
 export const timeLabel = (iso: string): string =>
   new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true });

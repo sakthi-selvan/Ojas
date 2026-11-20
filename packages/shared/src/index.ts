@@ -6,7 +6,7 @@
 import { z } from "zod";
 
 export * from "./auth";
-export * from "./settings";
+export * from "./settings"; export * from "./backup";
 import type { Session } from "./settings";
 
 // ───────────────────────── Primitives ─────────────────────────

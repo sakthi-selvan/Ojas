@@ -3,6 +3,8 @@ import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
 import fastifyStatic from "@fastify/static";
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ZodError } from "zod";
 import { can, type Permission } from "@ojas/shared";
 import type { Db } from "./db/index.js";
@@ -17,6 +19,7 @@ import { checkout, getReceipt } from "./modules/front-desk/checkout.js";
 import { queueFor, setStatus } from "./modules/front-desk/queue.js";
 import * as auth from "./modules/auth/service.js";
 import * as settings from "./modules/settings/service.js";
+import { BackupService } from "./modules/backup/service.js";
 
 export interface AppOptions {
   db: Db;
@@ -24,11 +27,16 @@ export interface AppOptions {
   logger?: boolean;
   /** Injected clock for tests. */
   now?: () => Date;
+  /** Default folder for backups (used until the administrator picks one). */
+  backupDir?: string;
 }
 
 declare module "fastify" {
   interface FastifyRequest {
     session: auth.SessionContext | null;
+  }
+  interface FastifyInstance {
+    backups: BackupService;
   }
   interface FastifyContextConfig {
     /** Reachable without signing in (status, sign-in, first-run setup, health). */
@@ -61,6 +69,12 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const now = opts.now ?? (() => new Date());
   const app = Fastify({ logger: opts.logger ?? false });
   const realtime = new Realtime();
+  const backups = new BackupService(db, {
+    defaultDir: opts.backupDir ?? join(tmpdir(), "ojas-backups"),
+    now,
+    log: (msg, err) => (err ? app.log.error({ err }, msg) : app.log.info(msg)),
+  });
+  app.decorate("backups", backups);
 
   // No CORS: the UI is always served from the same origin (the Ojas server, or Vite's proxy in dev),
   // so no other web page can call this API.
@@ -194,6 +208,30 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.delete<{ Params: { id: string } }>("/api/settings/leaves/:id", manage, async (req) => {
     await settings.deleteLeave(db, actorOf(req), req.params.id);
     return { ok: true };
+  });
+
+  // ── Backups ──
+  app.get("/api/backups/status", manage, async () => backups.status());
+  app.put("/api/backups/config", manage, async (req) => backups.configure(actorOf(req), req.body));
+  app.post("/api/backups/run", manage, async (req) => backups.run("manual", actorOf(req)));
+  app.get("/api/backups/runs", manage, async () => backups.runs());
+  app.get<{ Querystring: { folder?: string } }>("/api/backups/files", manage, async (req) => backups.listFiles(req.query.folder || undefined));
+  app.post("/api/backups/restore", manage, async (req, reply) => {
+    const result = await backups.restore(actorOf(req), req.body);
+    reply.clearCookie(SESSION_COOKIE, { path: "/api" }); // everyone signs in again, including this desk
+    return result;
+  });
+  // Disaster recovery on a new or wiped PC: before anyone is set up, restore instead of starting blank.
+  const onlyBeforeSetup = async () => {
+    if (!(await auth.needsSetup(db))) throw new AppError(403, "already_set_up", "Ojas is already set up. Sign in as an administrator to restore.");
+  };
+  app.get<{ Querystring: { folder?: string } }>("/api/setup/backups", pub, async (req) => {
+    await onlyBeforeSetup();
+    return backups.listFiles(req.query.folder || undefined);
+  });
+  app.post("/api/setup/restore", pub, async (req) => {
+    await onlyBeforeSetup();
+    return backups.restore({ user: "(first-run restore)", terminal: terminalOf(req) }, req.body);
   });
 
   // ── Patients ──

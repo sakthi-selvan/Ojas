@@ -9,7 +9,8 @@ import { useHotkeys } from "./lib/hotkeys";
 import { FrontDesk } from "./features/front-desk/FrontDesk";
 import { QueueBoard } from "./features/queue/QueueBoard";
 import { UsersPage } from "./features/admin/UsersPage";
-import { SettingsPage } from "./features/settings/SettingsPage";
+import { SettingsPage, type SettingsTab } from "./features/settings/SettingsPage";
+import { BackupBanner } from "./features/backup/BackupBanner";
 import { CredentialsForm } from "./features/auth/AuthScreens";
 import { Kbd, cx } from "./components/ui";
 
@@ -34,6 +35,11 @@ export function App() {
   const { can, lock } = useAuth();
   const pages = nav.filter((n) => !n.perm || can(n.perm));
   const [page, setPage] = useState<Page>(pages[0]!.id);
+  const [settingsTab, setSettingsTab] = useState<{ tab: SettingsTab; n: number }>({ tab: "doctors", n: 0 });
+  const openBackups = () => {
+    setSettingsTab((t) => ({ tab: "backups", n: t.n + 1 })); // remounts Settings on the Backups tab
+    setPage("settings");
+  };
   const connection = useServerEvents();
   const facility = useQuery({ queryKey: ["facility"], queryFn: api.facility, staleTime: Infinity });
   useHotkeys({
@@ -86,8 +92,9 @@ export function App() {
           <UserMenu />
         </div>
       </header>
+      {can("settings.manage") && <BackupBanner onOpen={openBackups} />}
       <main id="main" className="flex-1">
-        {page === "front-desk" ? <FrontDesk /> : page === "users" ? <UsersPage /> : page === "settings" ? <SettingsPage /> : <QueueBoard />}
+        {page === "front-desk" ? <FrontDesk /> : page === "users" ? <UsersPage /> : page === "settings" ? <SettingsPage key={settingsTab.n} initialTab={settingsTab.tab} /> : <QueueBoard />}
       </main>
     </div>
   );

@@ -1,20 +1,23 @@
 import { useState } from "react";
-import { Building2, CalendarOff, Stethoscope } from "lucide-react";
+import { Building2, CalendarOff, DatabaseBackup, Stethoscope } from "lucide-react";
 import { Card, cx } from "../../components/ui";
 import { ClinicForm } from "./ClinicForm";
 import { DoctorsPanel } from "./DoctorsPanel";
 import { HolidaysPanel } from "./HolidaysPanel";
+import { BackupsPanel } from "../backup/BackupsPanel";
 
-type Tab = "doctors" | "holidays" | "clinic";
+export type SettingsTab = "doctors" | "holidays" | "backups" | "clinic";
+type Tab = SettingsTab;
 const tabs: { id: Tab; label: string; icon: typeof Building2 }[] = [
   { id: "doctors", label: "Doctors & timings", icon: Stethoscope },
   { id: "holidays", label: "Holidays & leave", icon: CalendarOff },
+  { id: "backups", label: "Backups", icon: DatabaseBackup },
   { id: "clinic", label: "Clinic details", icon: Building2 },
 ];
 
 /** Administrator settings. The most frequent changes (timings, leave) come first. */
-export function SettingsPage() {
-  const [tab, setTab] = useState<Tab>("doctors");
+export function SettingsPage({ initialTab = "doctors" }: { initialTab?: SettingsTab }) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-4 p-4 lg:p-6">
       <div className="flex flex-wrap items-center gap-3">
@@ -49,6 +52,7 @@ export function SettingsPage() {
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "doctors" && <DoctorsPanel />}
         {tab === "holidays" && <HolidaysPanel />}
+        {tab === "backups" && <BackupsPanel />}
         {tab === "clinic" && <Card className="p-4 sm:p-6"><ClinicForm /></Card>}
       </div>
     </div>

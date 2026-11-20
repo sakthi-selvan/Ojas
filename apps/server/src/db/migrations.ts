@@ -229,6 +229,38 @@ export const migrations: { id: number; name: string; sql: string }[] = [
       create index practitioner_leave_idx on core.practitioner_leave (practitioner_id, from_date, to_date);
     `,
   },
+  {
+    id: 4,
+    name: "backups",
+    sql: `
+      -- Backup settings. keyring holds every key ever used ({salt, key} base64), newest last, so this
+      -- install can restore its own older backups without asking for the password.
+      create table core.backup_config (
+        id             integer primary key default 1 check (id = 1),
+        keyring        jsonb not null default '[]',
+        primary_dir    text not null default '',
+        secondary_dir  text not null default '',
+        interval_hours integer not null default 4 check (interval_hours between 1 and 24),
+        keep_count     integer not null default 30 check (keep_count between 3 and 365),
+        ${meta}
+      );
+      insert into core.backup_config (id) values (1);
+
+      create table core.backup_run (
+        id          uuid primary key,
+        started_at  timestamptz not null,
+        finished_at timestamptz,
+        reason      text not null,
+        ok          boolean not null default false,
+        file_name   text,
+        bytes       bigint,
+        copies      jsonb not null default '[]',
+        error       text,
+        actor       text not null
+      );
+      create index backup_run_started_idx on core.backup_run (started_at desc);
+    `,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {
