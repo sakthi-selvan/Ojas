@@ -5,6 +5,8 @@
  */
 import { z } from "zod";
 
+export * from "./auth";
+
 // ───────────────────────── Primitives ─────────────────────────
 
 /** Money is always stored and transferred as integer paise (1 INR = 100 paise). Never floats. */

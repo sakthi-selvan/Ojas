@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 /**
  * Configuration comes from environment variables. The Windows Service installer writes these;
@@ -21,7 +21,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: Number(env.OJAS_PORT ?? 4870),
     host: env.OJAS_HOST ?? "127.0.0.1",
     dbUrl: env.OJAS_DB_URL || undefined,
-    dataDir: env.OJAS_DATA_DIR ?? join(process.cwd(), ".data", "db"),
-    webDir: env.OJAS_WEB_DIR || undefined,
+    // Paths may be relative in a hand-written service config; resolve them against the working folder.
+    dataDir: resolve(env.OJAS_DATA_DIR ?? join(process.cwd(), ".data", "db")),
+    webDir: env.OJAS_WEB_DIR ? resolve(env.OJAS_WEB_DIR) : undefined,
   };
 }

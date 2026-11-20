@@ -1,6 +1,10 @@
 import type {
   CheckoutInput, Patient, PatientSearchResult, Practitioner, QueueItem, QuickRegisterInput, Receipt, Slot, AppointmentStatus,
+  AuthStatus, SessionUser, LoginInput, PinLoginInput, SetupInput, ChangeCredentialsInput, UserTile, UserSummary, CreateUserInput, UpdateUserInput,
 } from "@ojas/shared";
+
+/** Fired when the server says the session is gone (signed out elsewhere, idle timeout, deactivated). */
+export const SESSION_ENDED = "ojas:session-ended";
 
 /** Error shape returned by the server: a stable code plus a message written for the user. */
 export class ApiError extends Error {
@@ -28,7 +32,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   try {
     res = await fetch(`/api${path}`, {
       method,
-      headers: { "content-type": "application/json", "x-ojas-terminal": terminalId() },
+      // content-type only with a body: an empty JSON body is a 400 in Fastify (and broke logout once).
+      headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), "x-ojas-terminal": terminalId() },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
@@ -37,6 +42,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const data = res.status === 204 ? undefined : await res.json().catch(() => undefined);
   if (!res.ok) {
     const d = data as { code?: string; message?: string; details?: unknown } | undefined;
+    if ((res.status === 401 && d?.code === "not_signed_in") || d?.code === "password_change_required") {
+      window.dispatchEvent(new Event(SESSION_ENDED));
+    }
     throw new ApiError(res.status, d?.code ?? "error", d?.message ?? `Request failed (${res.status})`, d?.details);
   }
   return data as T;
@@ -53,6 +61,20 @@ export const api = {
   receipt: (invoiceId: string) => request<Receipt>("GET", `/invoices/${invoiceId}/receipt`),
   queue: (date: string) => request<QueueItem[]>("GET", `/queue?date=${date}`),
   setStatus: (appointmentId: string, status: AppointmentStatus) => request<{ ok: true }>("PATCH", `/appointments/${appointmentId}/status`, { status }),
+
+  // Auth
+  authStatus: () => request<AuthStatus>("GET", "/auth/status"),
+  setup: (input: SetupInput) => request<SessionUser>("POST", "/auth/setup", input),
+  login: (input: LoginInput) => request<SessionUser>("POST", "/auth/login", input),
+  pinLogin: (input: PinLoginInput) => request<SessionUser>("POST", "/auth/pin", input),
+  logout: () => request<{ ok: true }>("POST", "/auth/logout"),
+  tiles: (ids: string[]) => request<UserTile[]>("POST", "/auth/tiles", { ids }),
+  changeCredentials: (input: ChangeCredentialsInput) => request<SessionUser>("POST", "/auth/credentials", input),
+
+  // Users
+  users: () => request<UserSummary[]>("GET", "/users"),
+  createUser: (input: CreateUserInput) => request<UserSummary>("POST", "/users", input),
+  updateUser: (id: string, input: UpdateUserInput) => request<UserSummary>("PATCH", `/users/${id}`, input),
 };
 
 export const today = (): string => {

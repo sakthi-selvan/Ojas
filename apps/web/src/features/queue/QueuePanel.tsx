@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AppointmentStatus, QueueItem } from "@ojas/shared";
 import { api, timeLabel, today } from "../../lib/api";
 import { Alert, Badge, Button, Card, cx } from "../../components/ui";
+import { useAuth } from "../../lib/auth";
 
 export const statusMeta: Record<AppointmentStatus, { label: string; tone: "neutral" | "ok" | "warn" | "danger" | "accent" }> = {
   BOOKED: { label: "Booked", tone: "neutral" },
@@ -68,7 +69,8 @@ export function QueueRow({ item }: { item: QueueItem }) {
     mutationFn: (to: AppointmentStatus) => api.setStatus(item.appointmentId, to),
     onSettled: () => qc.invalidateQueries({ queryKey: ["queue"] }),
   });
-  const action = nextAction[item.status];
+  const { can } = useAuth();
+  const action = can("queue.update") ? nextAction[item.status] : undefined;
   const meta = statusMeta[item.status];
   return (
     <li className={cx("flex items-center gap-3 rounded-lg px-2 py-2", item.status === "DONE" && "opacity-60")}>

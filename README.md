@@ -18,6 +18,16 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - 80 mm thermal receipt layout. The desktop app prints silently.
 - Light and dark themes, WCAG-minded focus, labels and contrast.
 
+### Sign-in and roles
+
+- **First run** asks for the administrator account. There are no default passwords.
+- **Roles:** Administrator, Reception, Accounts, Doctor, Nurse, Laboratory, Pharmacy. Each sees only the screens it can use, and the server enforces every permission (one shared table in `packages/shared/src/auth.ts`).
+- **Shared desks:** the desk locks after 5 minutes idle or on <kbd>Ctrl</kbd>+<kbd>L</kbd>. To unlock, tap your name and type your 4–6 digit PIN. Easy PINs are rejected.
+- **Staff accounts:** an admin adds a user with a one-time temporary password. At first sign-in the user must choose their own password and a PIN.
+- **Protection:** 5 wrong attempts lock the account for 5 minutes. Sessions end after 30 minutes idle or 12 hours. Deactivating a user, resetting their password or changing their role signs them out everywhere.
+- **Storage:** passwords and PINs are hashed with scrypt, and session tokens are stored only as SHA-256. The session cookie is HttpOnly and SameSite=Strict.
+- **Discounts** need the Accounts or Administrator role. Every action is audited under the real user and desk.
+
 ## Run it
 
 Needs Node.js 22+ only.
@@ -61,8 +71,8 @@ Desktop mode is set in `%ProgramData%\Ojas\desktop.json`: `{"mode":"standalone"}
 
 ## Not done yet (next milestones)
 
-1. Sign-in, roles and PIN user-switching. Today the audit trail records the terminal ID and the user `reception`.
-2. Setup wizard (facility details, doctors, fees, schedules) and masters screens. Doctors are seeded with demo data.
-3. Automatic encrypted backups with a backup-age banner, and restore.
-4. Installer (electron-builder), Windows Service for LAN servers, LAN server auto-discovery, offline licensing.
+1. Setup wizard (facility details, doctors, fees, schedules) and masters screens. Doctors are seeded with demo data.
+2. Automatic encrypted backups with a backup-age banner, and restore.
+3. Installer (electron-builder), Windows Service for LAN servers with HTTPS (then the session cookie becomes `Secure`), LAN server auto-discovery, offline licensing.
+4. Admin-editable role permissions, and linking doctor accounts to their practitioner record ("my patients").
 5. Then the modules: Pharmacy, LIMS, OPD consultation/EMR, IPD.

@@ -126,7 +126,7 @@ export function Badge({ children, tone = "neutral" }: { children: ReactNode; ton
     danger: "bg-danger-soft text-danger",
     accent: "bg-accent-soft text-accent",
   };
-  return <span className={cx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold", tones[tone])}>{children}</span>;
+  return <span className={cx("inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold", tones[tone])}>{children}</span>;
 }
 
 /** Inline message. Errors are announced to screen readers immediately. */

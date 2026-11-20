@@ -4,6 +4,7 @@ import { Banknote, CreditCard, Smartphone } from "lucide-react";
 import { formatINR, type PaymentMode, type Practitioner, type Receipt } from "@ojas/shared";
 import { api, ApiError } from "../../lib/api";
 import { useHotkeys } from "../../lib/hotkeys";
+import { useAuth } from "../../lib/auth";
 import { Alert, Button, Field, Segmented } from "../../components/ui";
 
 const LAST_MODE = "ojas.frontdesk.paymentMode";
@@ -29,13 +30,15 @@ export function BillStep({
   onPaid: (r: Receipt) => void;
   onSlotTaken: (message: string) => void;
 }) {
+  const { can } = useAuth();
+  const canDiscount = can("billing.discount");
   const [mode, setMode] = useState<PaymentMode>(savedMode);
   const [discountText, setDiscountText] = useState("");
   // One key per bill attempt: a double-press of F9 or a retry after a timeout can never charge twice.
   const idemKey = useRef(crypto.randomUUID());
 
   const fee = doctor.consultationFee;
-  const discount = Math.round((Number(discountText.replace(/[^\d.]/g, "")) || 0) * 100);
+  const discount = canDiscount ? Math.round((Number(discountText.replace(/[^\d.]/g, "")) || 0) * 100) : 0;
   const discountError = discount > fee ? "Discount is more than the bill" : undefined;
   const total = Math.max(0, fee - discount);
 
@@ -78,8 +81,8 @@ export function BillStep({
         </tbody>
       </table>
 
-      <div className="grid gap-4 sm:grid-cols-[1fr_2fr]">
-        <Field label="Discount (₹)" inputMode="decimal" placeholder="0" value={discountText} onChange={(e) => setDiscountText(e.target.value)} error={discountError} />
+      <div className={canDiscount ? "grid gap-4 sm:grid-cols-[1fr_2fr]" : "grid gap-4"}>
+        {canDiscount && <Field label="Discount (₹)" inputMode="decimal" placeholder="0" value={discountText} onChange={(e) => setDiscountText(e.target.value)} error={discountError} />}
         <Segmented
           label="Payment mode"
           name="mode"

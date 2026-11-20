@@ -1,27 +1,28 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, InjectOptions } from "fastify";
 import type { Practitioner, Patient, Receipt, Slot } from "@ojas/shared";
-import { openDb, type Db } from "../src/db/index.js";
-import { seedIfEmpty } from "../src/db/seed.js";
-import { buildApp } from "../src/app.js";
+import type { Db } from "../src/db/index.js";
 import { financialYear } from "../src/core/numbering.js";
+import { makeApp, setupAdmin, type Client } from "./helpers.js";
 
 // Fixed "now": 2026-11-20 10:02 local time, so slots are deterministic.
 const NOW = new Date(2026, 10, 20, 10, 2);
 let db: Db;
-let app: FastifyInstance;
+let server: FastifyInstance;
 let doctor: Practitioner;
+/** All front-desk calls are made by a signed-in administrator. */
+let admin: Client;
+const app = { inject: (o: InjectOptions | string) => admin.req(typeof o === "string" ? { url: o } : o) };
 
 beforeAll(async () => {
-  db = await openDb({}); // in-memory PGlite
-  await seedIfEmpty(db);
-  app = await buildApp({ db, now: () => NOW });
+  ({ db, app: server } = await makeApp(() => NOW)); // in-memory PGlite
+  admin = await setupAdmin(server);
   const res = await app.inject({ url: "/api/practitioners" });
   doctor = (res.json() as Practitioner[]).find((p) => p.name.includes("Ananya"))!;
 });
 afterAll(async () => {
-  await app.close();
+  await server.close();
   await db.close();
 });
 

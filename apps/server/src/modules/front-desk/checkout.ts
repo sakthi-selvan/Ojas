@@ -12,8 +12,11 @@ import { getPractitioner, isOnGrid } from "./scheduling.js";
  * Front-desk checkout: book the slot, raise the invoice and record the payment as one atomic unit.
  * Safe to retry with the same idempotencyKey (double click, network blip, client crash).
  */
-export async function checkout(db: Db, actor: Actor, input: unknown, now = new Date()): Promise<Receipt> {
+export async function checkout(db: Db, actor: Actor, input: unknown, now = new Date(), opts: { allowDiscount?: boolean } = {}): Promise<Receipt> {
   const v = CheckoutInput.parse(input);
+  if ((v.discount ?? 0) > 0 && !opts.allowDiscount) {
+    throw new AppError(403, "discount_not_allowed", "You don't have permission to give discounts. Ask accounts or an administrator.");
+  }
 
   const previous = await db.query<{ response: Receipt }>("select response from core.idempotency where key = $1", [v.idempotencyKey]);
   if (previous.rows[0]) return previous.rows[0].response;

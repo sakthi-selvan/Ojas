@@ -147,6 +147,38 @@ export const migrations: { id: number; name: string; sql: string }[] = [
       create index outbox_pending_idx on core.outbox (created_at) where sent_at is null;
     `,
   },
+  {
+    id: 2,
+    name: "users_sessions",
+    sql: `
+      create table core.app_user (
+        id                   uuid primary key,
+        username             text not null unique,
+        display_name         text not null,
+        role                 text not null check (role in ('ADMIN','RECEPTION','ACCOUNTS','DOCTOR','NURSE','LAB','PHARMACY')),
+        password_hash        text not null,
+        pin_hash             text,
+        must_change_password boolean not null default false,
+        active               boolean not null default true,
+        failed_attempts      integer not null default 0,
+        locked_until         timestamptz,
+        last_login_at        timestamptz,
+        ${meta}
+      );
+
+      -- Opaque session tokens; only a SHA-256 of the token is stored, so a copied database
+      -- (or backup) cannot be used to hijack a signed-in desk.
+      create table core.session (
+        token_hash   text primary key,
+        user_id      uuid not null references core.app_user(id),
+        terminal     text not null,
+        created_at   timestamptz not null default now(),
+        last_seen_at timestamptz not null default now(),
+        expires_at   timestamptz not null
+      );
+      create index session_user_idx on core.session (user_id);
+    `,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {
