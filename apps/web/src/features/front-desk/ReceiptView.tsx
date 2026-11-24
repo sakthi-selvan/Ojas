@@ -10,7 +10,12 @@ const modeLabel = { CASH: "Cash", UPI: "UPI", CARD: "Card" } as const;
 declare global {
   interface Window {
     /** Present only inside the Ojas desktop app (see apps/desktop/src/preload.ts). */
-    ojas?: { desktop: true; print: (opts?: { silent?: boolean }) => Promise<{ ok: boolean; error?: string }> };
+    ojas?: {
+      desktop: true;
+      print: (opts?: { silent?: boolean }) => Promise<{ ok: boolean; error?: string }>;
+      /** Opens the desktop app's "how this PC connects" chooser. */
+      changeConnection?: () => Promise<void>;
+    };
   }
 }
 

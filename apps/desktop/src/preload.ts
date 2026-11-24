@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld("ojas", {
   desktop: true,
   print: (opts?: { silent?: boolean; deviceName?: string }) => ipcRenderer.invoke("ojas:print", opts),
   printers: () => ipcRenderer.invoke("ojas:printers"),
+  /** Opens the "how this PC connects" chooser (e.g. the server PC got a new address). */
+  changeConnection: () => ipcRenderer.invoke("ojas:change-connection"),
 });

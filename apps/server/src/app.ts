@@ -3,10 +3,10 @@ import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
 import fastifyStatic from "@fastify/static";
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { ZodError } from "zod";
-import { can, type Permission } from "@ojas/shared";
+import { APP_VERSION, can, type Permission, type ServerMode, type SystemInfo } from "@ojas/shared";
 import type { Db } from "./db/index.js";
 import type { Actor } from "./core/audit.js";
 import { verifyAuditChain } from "./core/audit.js";
@@ -29,6 +29,10 @@ export interface AppOptions {
   now?: () => Date;
   /** Default folder for backups (used until the administrator picks one). */
   backupDir?: string;
+  /** Server mode: serve HTTPS with this certificate (session cookie becomes Secure). */
+  https?: { key: string; cert: string };
+  /** What Settings → This server shows. */
+  system?: { mode: ServerMode; port: number; serverCode: string | null };
 }
 
 declare module "fastify" {
@@ -67,7 +71,8 @@ function actorOf(req: FastifyRequest): Actor {
 export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const { db } = opts;
   const now = opts.now ?? (() => new Date());
-  const app = Fastify({ logger: opts.logger ?? false });
+  // Fastify's https and http instances have different generic types; the routes are identical.
+  const app = Fastify({ logger: opts.logger ?? false, ...(opts.https ? { https: opts.https } : {}) }) as unknown as FastifyInstance;
   const realtime = new Realtime();
   const backups = new BackupService(db, {
     defaultDir: opts.backupDir ?? join(tmpdir(), "ojas-backups"),
@@ -99,7 +104,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
       httpOnly: true, // page scripts can't read it
       sameSite: "strict", // other sites can't send it
       maxAge: Math.floor(auth.SESSION_MAX_MS / 1000),
-      // TODO(tls): set `secure` once the LAN server uses HTTPS with the install-time certificate.
+      secure: !!opts.https, // over the clinic network the cookie only ever travels encrypted
     });
 
   app.decorateRequest("session", null);
@@ -147,6 +152,18 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.get("/api/health", pub, async () => ({ ok: true, engine: db.engine, serverTime: now().toISOString(), clients: realtime.size }));
   app.get("/api/events", { websocket: true }, (socket) => realtime.add(socket));
   app.get("/api/audit/verify", need("audit.verify"), async () => verifyAuditChain(db));
+  app.get("/api/system/info", need("settings.manage"), async (): Promise<SystemInfo> => ({
+    mode: opts.system?.mode ?? "standalone",
+    tls: !!opts.https,
+    port: opts.system?.port ?? 0,
+    hostname: hostname(),
+    addresses: Object.values(networkInterfaces())
+      .flat()
+      .filter((i) => i && i.family === "IPv4" && !i.internal)
+      .map((i) => i!.address),
+    serverCode: opts.system?.serverCode ?? null,
+    version: APP_VERSION,
+  }));
   app.get("/api/facility", pub, async () => settings.publicFacility(db));
 
   // ── Auth ──

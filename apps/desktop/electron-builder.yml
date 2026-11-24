@@ -1,0 +1,48 @@
+# Windows installer for Ojas (NSIS). Build with: npm run dist -w @ojas/desktop
+appId: in.ojas.desktop
+productName: Ojas
+executableName: Ojas
+copyright: Ojas
+electronVersion: 45.4.1
+directories:
+  output: release
+  buildResources: build
+# The app itself is only the bundled shell; the server, UI and service host ship as plain files beside it.
+files:
+  - dist/main.cjs
+  - dist/preload.cjs
+  - dist/setup-preload.cjs
+  - dist/setup.html
+  - dist/setup.js
+  - package.json
+extraResources:
+  - from: ../server/dist/main.js
+    to: server/main.js
+  - from: ../server/dist/package.json
+    to: server/package.json
+  - from: ../../node_modules/@electric-sql/pglite
+    to: server/node_modules/@electric-sql/pglite
+    filter: ["**/*", "!**/*.map", "!**/*.d.ts", "!**/*.d.cts", "!**/*.md"]
+  - from: ../web/dist
+    to: web
+  - from: dist/service
+    to: service
+asar: true
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  # Unsigned for now: Windows SmartScreen warns until a code-signing certificate is added here.
+  signAndEditExecutable: true
+nsis:
+  oneClick: false
+  perMachine: true
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Ojas
+  # Patient data in %ProgramData%\Ojas is never removed by uninstalling.
+  deleteAppDataOnUninstall: false
+  include: build/installer.nsh
+  artifactName: Ojas-Setup-${version}.exe

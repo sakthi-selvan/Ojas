@@ -1,6 +1,6 @@
 import type {
   CheckoutInput, Patient, PatientSearchResult, Practitioner, QueueItem, QuickRegisterInput, Receipt, DaySlots, AppointmentStatus,
-  BackupStatus, BackupConfigInput, BackupRun, BackupFile, RestoreInput, RestoreResult,
+  SystemInfo, BackupStatus, BackupConfigInput, BackupRun, BackupFile, RestoreInput, RestoreResult,
   Facility, FacilityInput, PublicFacility, PractitionerInput, Holiday, HolidayInput, Leave, LeaveInput,
   AuthStatus, SessionUser, LoginInput, PinLoginInput, SetupInput, ChangeCredentialsInput, UserTile, UserSummary, CreateUserInput, UpdateUserInput,
 } from "@ojas/shared";
@@ -86,6 +86,8 @@ export const api = {
   leaves: () => request<Leave[]>("GET", "/settings/leaves"),
   addLeave: (input: LeaveInput) => request<{ leave: Leave; bookedPatients: number }>("POST", "/settings/leaves", input),
   deleteLeave: (id: string) => request<{ ok: true }>("DELETE", `/settings/leaves/${id}`),
+
+  systemInfo: () => request<SystemInfo>("GET", "/system/info"),
 
   // Backups (administrator)
   backupStatus: () => request<BackupStatus>("GET", "/backups/status"),

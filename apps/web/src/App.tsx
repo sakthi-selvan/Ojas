@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardList, Stethoscope, FlaskConical, Pill, BedDouble, Wifi, WifiOff, Users, Lock, LogOut, KeyRound, ChevronDown, Settings } from "lucide-react";
+import { ClipboardList, Stethoscope, FlaskConical, Pill, BedDouble, Wifi, WifiOff, Users, Lock, LogOut, KeyRound, ChevronDown, Settings, Network } from "lucide-react";
 import { ROLE_LABEL, type Permission } from "@ojas/shared";
 import { api } from "./lib/api";
 import { useAuth } from "./lib/auth";
@@ -125,7 +125,7 @@ function Clock() {
 }
 
 function UserMenu() {
-  const { user, lock, signOut } = useAuth();
+  const { user, lock, signOut, can } = useAuth();
   const [open, setOpen] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -164,6 +164,9 @@ function UserMenu() {
             <div className="text-xs text-ink-2">{ROLE_LABEL[user.role]}</div>
           </div>
           <MenuItem icon={KeyRound} onClick={() => { setOpen(false); dialog.current?.showModal(); }}>My PIN & password</MenuItem>
+          {window.ojas?.changeConnection && can("settings.manage") && (
+            <MenuItem icon={Network} onClick={() => { setOpen(false); void window.ojas!.changeConnection!(); }}>This PC's connection…</MenuItem>
+          )}
           <MenuItem icon={Lock} onClick={() => void lock()} hint="Ctrl+L">Lock desk</MenuItem>
           <MenuItem icon={LogOut} onClick={() => void signOut()}>Sign out</MenuItem>
         </div>

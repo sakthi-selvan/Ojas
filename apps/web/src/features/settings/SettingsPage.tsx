@@ -1,18 +1,20 @@
 import { useState } from "react";
-import { Building2, CalendarOff, DatabaseBackup, Stethoscope } from "lucide-react";
+import { Building2, CalendarOff, DatabaseBackup, Network, Stethoscope } from "lucide-react";
 import { Card, cx } from "../../components/ui";
 import { ClinicForm } from "./ClinicForm";
 import { DoctorsPanel } from "./DoctorsPanel";
 import { HolidaysPanel } from "./HolidaysPanel";
 import { BackupsPanel } from "../backup/BackupsPanel";
+import { ThisServerPanel } from "./ThisServerPanel";
 
-export type SettingsTab = "doctors" | "holidays" | "backups" | "clinic";
+export type SettingsTab = "doctors" | "holidays" | "backups" | "server" | "clinic";
 type Tab = SettingsTab;
 const tabs: { id: Tab; label: string; icon: typeof Building2 }[] = [
   { id: "doctors", label: "Doctors & timings", icon: Stethoscope },
   { id: "holidays", label: "Holidays & leave", icon: CalendarOff },
   { id: "backups", label: "Backups", icon: DatabaseBackup },
   { id: "clinic", label: "Clinic details", icon: Building2 },
+  { id: "server", label: "This server", icon: Network },
 ];
 
 /** Administrator settings. The most frequent changes (timings, leave) come first. */
@@ -53,6 +55,7 @@ export function SettingsPage({ initialTab = "doctors" }: { initialTab?: Settings
         {tab === "doctors" && <DoctorsPanel />}
         {tab === "holidays" && <HolidaysPanel />}
         {tab === "backups" && <BackupsPanel />}
+        {tab === "server" && <ThisServerPanel />}
         {tab === "clinic" && <Card className="p-4 sm:p-6"><ClinicForm /></Card>}
       </div>
     </div>

@@ -45,6 +45,13 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - **New or rebuilt PC:** the first-run screen offers "Restore from a backup": point it at the USB folder and enter the backup password.
 - **External PostgreSQL** (hospital LAN servers) is backed up with PostgreSQL's own tools instead.
 
+### Clinic network
+
+- **Three ways to run a PC**, picked on first start (and later from your name → *This PC's connection…*): **this PC only** (standalone), **main server for the clinic**, or **a desk on the clinic network**.
+- **Server as a Windows Service** ("Ojas Server"): keeps serving every desk with nobody signed in to Windows, starts at boot, restarts after a crash, and stops cleanly so the database flushes. Choosing "main server" asks for administrator approval once. It also opens the firewall for private and domain networks only (TCP 4870, UDP 4872) and locks `%ProgramData%\Ojas\data` to SYSTEM and Administrators. The log is `%ProgramData%\Ojas\data\logs\server.log`.
+- **HTTPS on the network:** each server makes its own certificate on first start (`%ProgramData%\Ojas\tls`, valid 10 years) and the session cookie is `Secure`. The certificate's fingerprint is shown as a **server code** (`D2A3-693A-BCED-D06A`), in Settings → This server and on the desk when pairing. The desk pins it, so it never talks to a different machine on the same address.
+- **Desks find the server by themselves:** the desk sends a UDP broadcast and lists every server that answers; you can also type an address. If the server's address changes later, the desk looks again for the same server code and reconnects without asking.
+
 ## Run it
 
 Needs Node.js 22+ only.
@@ -83,6 +90,14 @@ Build everything, then start the desktop app in standalone mode (it starts its o
 npm run build; npm start -w @ojas/desktop
 ```
 
+Build the Windows installer (`apps/desktop/release/Ojas-Setup-<version>.exe`; per-machine, includes the server, the UI and the service host):
+
+```powershell
+npm run dist -w @ojas/desktop
+```
+
+The installer and `OjasService.exe` are not code-signed yet. Windows Smart App Control blocks unsigned programs, so on a PC with it turned on the build stops at the NSIS step and the service host won't run. Build and test on a PC without Smart App Control, and sign the release before giving it to clinics.
+
 | Env var | Meaning | Default |
 |---|---|---|
 | `OJAS_PORT` / `OJAS_HOST` | Server bind | `4870` / `127.0.0.1` (use `0.0.0.0` for a LAN server) |
@@ -90,13 +105,17 @@ npm run build; npm start -w @ojas/desktop
 | `OJAS_DATA_DIR` | Embedded database folder | `apps/server/.data/db` in dev, `%ProgramData%\Ojas\data\db` in desktop |
 | `OJAS_WEB_DIR` | Built UI to serve to LAN browsers | — |
 | `OJAS_BACKUP_DIR` | Default main backup folder | `backups` beside the database folder |
+| `OJAS_MODE` | `standalone`, `server` or `client`, shown in Settings → This server | `standalone` |
+| `OJAS_TLS` / `OJAS_TLS_DIR` | `1` serves HTTPS with this server's own certificate, kept in this folder | off / `tls` beside the data folder |
+| `OJAS_DISCOVERY` | `1` answers desks looking for a server (UDP 4872) | off |
+| `OJAS_STDIN_CONTROL` | `1` stops cleanly when "shutdown" arrives on stdin (used by the service host) | off |
 | `OJAS_DEMO` | `1` fills an empty database with a demo clinic and doctors | — |
 
-Desktop mode is set in `%ProgramData%\Ojas\desktop.json`: `{"mode":"standalone"}` or `{"mode":"client","serverUrl":"http://192.168.1.10:4870"}`.
+The desktop app saves its choice in its user data folder. To set it for every user on a PC, put the same JSON in `%ProgramData%\Ojas\desktop.json`: `{"mode":"standalone"}`, or `{"mode":"client","serverUrl":"https://192.168.1.10:4870","fingerprint":"<SHA-256 of the server certificate>"}`. A PC with the Ojas Server service installed always runs as the server.
 
 ## Not done yet (next milestones)
 
-1. Installer (electron-builder), Windows Service for LAN servers with HTTPS (then the session cookie becomes `Secure`), LAN server auto-discovery, offline licensing.
+1. Offline licensing (signed licence file) and updates from USB; code-signing the installer.
 2. Rescheduling bookings hit by a new holiday or leave, bill cancellation and refunds, and a day-end cash report.
 3. Admin-editable role permissions, and linking doctor accounts to their practitioner record ("my patients").
 4. Then the modules: Pharmacy, LIMS, OPD consultation/EMR, IPD.
