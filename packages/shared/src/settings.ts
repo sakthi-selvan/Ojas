@@ -25,6 +25,8 @@ export const FacilityInput = z.object({
     .refine((v) => v === "" || /^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$/.test(v), "GSTIN should be 15 characters, like 33ABCDE1234F1Z5")
     .default(""),
   receiptFooter: z.string().trim().max(120).default(""),
+  /** Retail drug licence number(s), printed on pharmacy bills (e.g. "TN-01-20B-1234, TN-01-21B-1234"). */
+  drugLicence: z.string().trim().max(120).default(""),
   /** Prefix for patient IDs, e.g. "OJ-" → OJ-000123. Can only change before the first patient is registered. */
   uhidPrefix: z.string().trim().toUpperCase().regex(/^[A-Z]{1,5}-?$/, "1–5 letters, optionally ending with a dash"),
 });
@@ -37,6 +39,7 @@ export interface Facility {
   email: string;
   gstin: string;
   receiptFooter: string;
+  drugLicence: string;
   uhidPrefix: string;
   /** False until the administrator finishes the first-run wizard. */
   setupCompleted: boolean;

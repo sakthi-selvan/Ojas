@@ -21,6 +21,7 @@ export class Client {
   get = (url: string) => this.req({ method: "GET", url });
   post = (url: string, payload?: object) => this.req({ method: "POST", url, payload: payload ?? {} });
   patch = (url: string, payload: object) => this.req({ method: "PATCH", url, payload });
+  put = (url: string, payload: object) => this.req({ method: "PUT", url, payload });
 }
 
 export async function makeApp(now: () => Date = () => new Date(), opts: { demo?: boolean } = { demo: true }): Promise<{ db: Db; app: FastifyInstance; anon: () => Client }> {

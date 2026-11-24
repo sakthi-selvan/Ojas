@@ -35,6 +35,27 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - **Holidays and leave:** a clinic holiday closes the day for everyone; doctor leave closes only that doctor's days. The front desk shows why ("Clinic closed: Pongal", "Dr. X is on leave (Conference), back Thu 26 Nov") and the server refuses bookings on those days. Adding one tells you how many patients are already booked, so they can be called.
 - **Settings page** (<kbd>Alt</kbd>+<kbd>8</kbd>, administrators): doctors and timings, holidays and leave, clinic details. Changes apply to new bookings only. The patient ID prefix locks after the first patient. Every change is in the audit trail.
 
+### OPD consultation
+
+- **Doctor's screen** (<kbd>Alt</kbd>+<kbd>3</kbd>, doctors and administrators): today's patients for the chosen doctor on the left (remembered per desk). <kbd>Alt</kbd>+<kbd>N</kbd> calls the next waiting patient in and opens their record.
+- **One form:** vitals, complaints, history, examination, diagnoses (optional ICD-10 code), medicines (dose, 1-0-1 style frequency, before/after food, days, notes), tests, advice and a review date (one click for 3 days, 1 week, 2 weeks or 1 month). It saves itself about a second after the doctor stops typing.
+- **Faster prescribing:** diagnoses, medicines and tests suggest what the clinic has written before, most used first. Picking a medicine fills in the dose and frequency it was last given with. "Repeat medicines" copies an earlier prescription from the patient's past visits, shown beside the form.
+- **Vitals at triage:** nurses record temperature (°F), pulse, BP, SpO₂, breathing rate, weight, height (BMI is worked out) and blood sugar from the OPD queue. Out-of-range readings are coloured. Vitals and the doctor's notes are saved separately, so a nurse and a doctor working on the same visit never overwrite each other. A screen with an out-of-date copy is refused rather than overwriting.
+- **Sign & print** (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>): locks the record, marks the visit done and prints an A5 prescription with the doctor's name, qualification and registration number. In the desktop app it opens the print dialog, so it doesn't go to the receipt printer.
+- **Corrections:** a signed record is changed only through "Correct", which needs a reason. Every signed version is kept exactly as signed (`GET /api/consult/:appointmentId/versions`), and signing and corrections are in the audit trail.
+- Tests ordered here wait as "ordered" for the laboratory module.
+
+### Pharmacy
+
+- **Pharmacy screen** (<kbd>Alt</kbd>+<kbd>4</kbd>, Pharmacy role and administrators; Accounts sees the register only), with tabs for Sell, Stock & expiry, Purchases, Medicines and the Schedule H1 register.
+- **Medicines:** brand, strength, form, generic name, units per pack, GST rate and HSN, drug schedule (H, H1, X) and a reorder level. Units per pack locks once stock has been received.
+- **Purchases:** enter a supplier invoice line by line (batch, expiry month, packs, free packs, rate, MRP, GST) and check the total against the paper invoice. Each one gets a goods receipt number (`GRN/26-27/000001`). The same invoice can't be entered twice, expired batches are refused, and a batch number that comes back with a different expiry is flagged.
+- **Selling** (<kbd>F2</kbd> to add a medicine, <kbd>F9</kbd> to bill): stock always leaves from the batch that expires first, and expired stock is never sold. Strips can be cut (15 tablets from a strip of 10 is priced pro rata from MRP). Schedule H, H1 and X medicines need the prescribing doctor's name. Discounts need the discount permission. Bills are numbered `PH/26-27/000001`.
+- **From the consultation:** today's signed prescriptions that haven't been dispensed are listed. One click fills in the patient, the doctor and the medicines, matched by name or generic name, with quantities worked out from dose × days. Medicines the pharmacy doesn't stock are named so they can be skipped or added by hand.
+- **GST:** MRP includes GST. The 80 mm bill shows each line's batch and expiry, the drug licence number and GSTIN, and a CGST/SGST table per rate, with any discount shared across the lines.
+- **Stock & expiry:** expired stock still on the shelf, stock expiring within 90 days, and medicines below their reorder level. Each batch shows its stock, and corrections (expired, damaged, returned to supplier, a stock count, or other) need a reason. Only a count can add stock. Every movement is recorded and audited.
+- **Schedule H1 register:** date, bill, patient, prescriber, medicine, batch and quantity for any period, H1 and X by default or all scheduled medicines, printable on A4 for inspection.
+
 ### Backups
 
 - **Encrypted:** each backup is one `.ojasbak` file with the whole database, encrypted with AES-256-GCM using a key derived (scrypt) from a backup password the administrator sets once. The clinic name and date stay readable, so backups can be listed without the password.
@@ -117,5 +138,6 @@ The desktop app saves its choice in its user data folder. To set it for every us
 
 1. Offline licensing (signed licence file) and updates from USB; code-signing the installer.
 2. Rescheduling bookings hit by a new holiday or leave, bill cancellation and refunds, and a day-end cash report.
-3. Admin-editable role permissions, and linking doctor accounts to their practitioner record ("my patients").
-4. Then the modules: Pharmacy, LIMS, OPD consultation/EMR, IPD.
+3. Admin-editable role permissions, and linking doctor accounts to their practitioner record, so the consultation screen opens on the right doctor without asking.
+4. Pharmacy: sales returns, supplier returns and credit notes, GSTR-1 / purchase GST reports, and barcode scanning.
+5. Then the modules: LIMS (picks up the tests ordered in consultations), IPD.

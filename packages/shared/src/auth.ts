@@ -24,6 +24,13 @@ export const PERMISSIONS = [
   "billing.collect",
   "billing.discount",
   "queue.update",
+  "consult.read",
+  "consult.write",
+  "vitals.write",
+  "pharmacy.sell",
+  "pharmacy.purchase",
+  "pharmacy.stock",
+  "pharmacy.reports",
   "users.manage",
   "settings.manage",
   "audit.verify",
@@ -33,11 +40,11 @@ export type Permission = (typeof PERMISSIONS)[number];
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   ADMIN: PERMISSIONS,
   RECEPTION: ["patients.read", "patients.write", "appointments.book", "billing.collect", "queue.update"],
-  ACCOUNTS: ["patients.read", "billing.collect", "billing.discount"],
-  DOCTOR: ["patients.read", "queue.update"],
-  NURSE: ["patients.read", "queue.update"],
+  ACCOUNTS: ["patients.read", "billing.collect", "billing.discount", "pharmacy.reports"],
+  DOCTOR: ["patients.read", "queue.update", "consult.read", "consult.write", "vitals.write"],
+  NURSE: ["patients.read", "queue.update", "consult.read", "vitals.write"],
   LAB: ["patients.read"],
-  PHARMACY: ["patients.read"],
+  PHARMACY: ["patients.read", "billing.discount", "pharmacy.sell", "pharmacy.purchase", "pharmacy.stock", "pharmacy.reports"],
 };
 
 export const can = (role: Role | undefined, perm: Permission): boolean => !!role && ROLE_PERMISSIONS[role].includes(perm);

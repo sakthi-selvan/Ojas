@@ -5,8 +5,8 @@ import { api } from "../../lib/api";
 import { Alert, Button, Field } from "../../components/ui";
 import { formErrors } from "./forms";
 
-type Form = Pick<Facility, "name" | "address" | "phone" | "email" | "gstin" | "receiptFooter" | "uhidPrefix">;
-const blank: Form = { name: "", address: "", phone: "", email: "", gstin: "", receiptFooter: "Get well soon", uhidPrefix: "OJ-" };
+type Form = Pick<Facility, "name" | "address" | "phone" | "email" | "gstin" | "receiptFooter" | "drugLicence" | "uhidPrefix">;
+const blank: Form = { name: "", address: "", phone: "", email: "", gstin: "", receiptFooter: "Get well soon", drugLicence: "", uhidPrefix: "OJ-" };
 
 /** Clinic details: printed on every receipt. Used by the first-run wizard and by Settings. */
 export function ClinicForm({ submitLabel = "Save", onSaved }: { submitLabel?: string; onSaved?: (f: Facility) => void }) {
@@ -63,6 +63,7 @@ export function ClinicForm({ submitLabel = "Save", onSaved }: { submitLabel?: st
         maxLength={6}
         hint={locked ? "Locked: patients already have IDs with this prefix" : `First patient will be ${(form.uhidPrefix || "OJ-").toUpperCase()}000001`}
       />
+      <Field label="Drug licence no." className="sm:col-span-2" value={form.drugLicence} onChange={set("drugLicence")} error={errs.drugLicence} hint="For the pharmacy: printed on every medicine bill" />
       <Field label="Receipt footer" className="sm:col-span-2" value={form.receiptFooter} onChange={set("receiptFooter")} error={errs.receiptFooter} hint="A short line at the bottom of every receipt" />
       {save.error && !Object.keys(errs).length && <div className="sm:col-span-2"><Alert tone="danger">{save.error.message}</Alert></div>}
       <div className="flex items-center gap-3 sm:col-span-2">

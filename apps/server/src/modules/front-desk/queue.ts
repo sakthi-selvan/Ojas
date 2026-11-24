@@ -5,19 +5,21 @@ import { AppError } from "../../core/errors.js";
 
 export async function queueFor(db: Queryable, date: string, practitionerId?: string): Promise<QueueItem[]> {
   const { rows } = await db.query<{
-    id: string; token: number; slot_start: string; status: QueueItem["status"]; patient_name: string; uhid: string; practitioner_id: string; practitioner_name: string;
+    id: string; token: number; slot_start: string; status: QueueItem["status"]; patient_name: string; uhid: string; practitioner_id: string; practitioner_name: string; has_vitals: boolean;
   }>(
-    `select a.id, a.token, a.slot_start, a.status, p.name as patient_name, p.uhid, d.id as practitioner_id, d.name as practitioner_name
+    `select a.id, a.token, a.slot_start, a.status, p.name as patient_name, p.uhid, d.id as practitioner_id, d.name as practitioner_name,
+            coalesce(e.vitals_at is not null, false) as has_vitals
        from core.appointment a
        join core.patient p on p.id = a.patient_id
        join core.practitioner d on d.id = a.practitioner_id
+       left join core.encounter e on e.appointment_id = a.id
       where a.visit_date = $1::date and ($2::uuid is null or a.practitioner_id = $2::uuid) and a.status <> 'CANCELLED'
       order by a.slot_start, a.token`,
     [date, practitionerId ?? null],
   );
   return rows.map((r) => ({
     appointmentId: r.id, token: r.token, slotStart: r.slot_start, status: r.status, patientName: r.patient_name,
-    uhid: r.uhid, practitionerId: r.practitioner_id, practitionerName: r.practitioner_name,
+    uhid: r.uhid, practitionerId: r.practitioner_id, practitionerName: r.practitioner_name, vitalsRecorded: r.has_vitals,
   }));
 }
 

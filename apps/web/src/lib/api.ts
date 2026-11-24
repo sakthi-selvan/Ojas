@@ -2,6 +2,9 @@ import type {
   CheckoutInput, Patient, PatientSearchResult, Practitioner, QueueItem, QuickRegisterInput, Receipt, DaySlots, AppointmentStatus,
   SystemInfo, BackupStatus, BackupConfigInput, BackupRun, BackupFile, RestoreInput, RestoreResult,
   Facility, FacilityInput, PublicFacility, PractitionerInput, Holiday, HolidayInput, Leave, LeaveInput,
+  ConsultView, Encounter, PastVisit, Suggestion, SuggestionKind, VitalsInput, ConsultNotesInput,
+  Item, ItemInput, Supplier, SupplierInput, PurchaseInput, PurchaseSummary, Batch, AdjustInput, StockAlerts, SaleInput, PharmacyBill,
+  SaleSummary, RegisterEntry, PendingPrescription,
   AuthStatus, SessionUser, LoginInput, PinLoginInput, SetupInput, ChangeCredentialsInput, UserTile, UserSummary, CreateUserInput, UpdateUserInput,
 } from "@ojas/shared";
 
@@ -63,6 +66,33 @@ export const api = {
   receipt: (invoiceId: string) => request<Receipt>("GET", `/invoices/${invoiceId}/receipt`),
   queue: (date: string) => request<QueueItem[]>("GET", `/queue?date=${date}`),
   setStatus: (appointmentId: string, status: AppointmentStatus) => request<{ ok: true }>("PATCH", `/appointments/${appointmentId}/status`, { status }),
+
+  // OPD consultation
+  consult: (appointmentId: string) => request<ConsultView>("GET", `/consult/${appointmentId}`),
+  consultHistory: (appointmentId: string) => request<PastVisit[]>("GET", `/consult/${appointmentId}/history`),
+  saveVitals: (appointmentId: string, input: VitalsInput) => request<Encounter>("PUT", `/consult/${appointmentId}/vitals`, input),
+  saveNotes: (appointmentId: string, input: ConsultNotesInput) => request<Encounter>("PUT", `/consult/${appointmentId}/notes`, input),
+  signConsult: (appointmentId: string) => request<Encounter>("POST", `/consult/${appointmentId}/sign`),
+  reopenConsult: (appointmentId: string, reason: string) => request<Encounter>("POST", `/consult/${appointmentId}/reopen`, { reason }),
+  suggestions: (kind: SuggestionKind, q: string) => request<Suggestion[]>("GET", `/consult/suggestions?kind=${kind}&q=${encodeURIComponent(q)}`),
+
+  // Pharmacy
+  pharmacyItems: (q = "", opts: { all?: boolean; inStock?: boolean } = {}) =>
+    request<Item[]>("GET", `/pharmacy/items?q=${encodeURIComponent(q)}${opts.all ? "&all=true" : ""}${opts.inStock ? "&inStock=true" : ""}`),
+  createItem: (input: ItemInput) => request<Item>("POST", "/pharmacy/items", input),
+  updateItem: (id: string, input: ItemInput) => request<Item>("PUT", `/pharmacy/items/${id}`, input),
+  batches: (itemId: string) => request<Batch[]>("GET", `/pharmacy/items/${itemId}/batches`),
+  suppliers: () => request<Supplier[]>("GET", "/pharmacy/suppliers"),
+  createSupplier: (input: SupplierInput) => request<Supplier>("POST", "/pharmacy/suppliers", input),
+  purchases: () => request<PurchaseSummary[]>("GET", "/pharmacy/purchases"),
+  receivePurchase: (input: PurchaseInput) => request<PurchaseSummary>("POST", "/pharmacy/purchases", input),
+  stockAlerts: () => request<StockAlerts>("GET", "/pharmacy/stock/alerts"),
+  adjustStock: (input: AdjustInput) => request<Batch>("POST", "/pharmacy/stock/adjust", input),
+  pendingPrescriptions: () => request<PendingPrescription[]>("GET", "/pharmacy/prescriptions"),
+  sell: (input: SaleInput) => request<PharmacyBill>("POST", "/pharmacy/sales", input),
+  sales: (date: string) => request<SaleSummary[]>("GET", `/pharmacy/sales?date=${date}`),
+  bill: (id: string) => request<PharmacyBill>("GET", `/pharmacy/sales/${id}`),
+  register: (from: string, to: string, schedules: string) => request<RegisterEntry[]>("GET", `/pharmacy/register?from=${from}&to=${to}&schedule=${schedules}`),
 
   // Auth
   authStatus: () => request<AuthStatus>("GET", "/auth/status"),

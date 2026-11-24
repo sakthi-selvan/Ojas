@@ -6,26 +6,10 @@
 import { z } from "zod";
 
 export * from "./auth";
-export * from "./settings"; export * from "./backup"; export * from "./network";
+export * from "./settings"; export * from "./backup"; export * from "./network"; export * from "./consult"; export * from "./pharmacy";
+export * from "./primitives";
+import { Paise, Sex, PaymentMode, Phone } from "./primitives";
 import type { Session } from "./settings";
-
-// ───────────────────────── Primitives ─────────────────────────
-
-/** Money is always stored and transferred as integer paise (1 INR = 100 paise). Never floats. */
-export const Paise = z.number().int().nonnegative();
-export type Paise = z.infer<typeof Paise>;
-
-export const Sex = z.enum(["M", "F", "O"]);
-export type Sex = z.infer<typeof Sex>;
-
-export const PaymentMode = z.enum(["CASH", "UPI", "CARD"]);
-export type PaymentMode = z.infer<typeof PaymentMode>;
-
-/** Indian mobile numbers: 10 digits starting 6–9. Accepts +91 / 0 prefixes and spaces, normalises to 10 digits. */
-export const Phone = z
-  .string()
-  .transform((s) => s.replace(/[^\d]/g, "").replace(/^(91|0)(?=\d{10}$)/, ""))
-  .pipe(z.string().regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit mobile number"));
 
 // ───────────────────────── Patients ─────────────────────────
 
@@ -144,15 +128,24 @@ export interface QueueItem {
   uhid: string;
   practitionerId: string;
   practitionerName: string;
+  /** A nurse (or the doctor) has recorded vitals for this visit. */
+  vitalsRecorded: boolean;
 }
 
 /** Messages pushed over the realtime socket. */
-export type ServerEvent = { type: "queue.changed"; date: string } | { type: "hello"; serverTime: string };
+export type ServerEvent =
+  | { type: "queue.changed"; date: string }
+  /** A consultation's vitals or notes changed (a nurse recorded vitals while the doctor has it open). */
+  | { type: "consult.changed"; appointmentId: string }
+  | { type: "hello"; serverTime: string };
 
 // ───────────────────────── Helpers ─────────────────────────
 
-export const formatINR = (paise: Paise): string =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(paise / 100);
+/** Whole rupees print bare (₹300); anything with paise prints both digits (₹1,377.60). */
+export const formatINR = (paise: Paise): string => {
+  const digits = paise % 100 === 0 ? 0 : 2;
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(paise / 100);
+};
 
 /** Age label from DOB, e.g. "42 y", "7 m", "12 d". */
 export function ageLabel(dob: string | null, now: Date = new Date()): string {

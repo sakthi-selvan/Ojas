@@ -20,6 +20,10 @@ import { queueFor, setStatus } from "./modules/front-desk/queue.js";
 import * as auth from "./modules/auth/service.js";
 import * as settings from "./modules/settings/service.js";
 import { BackupService } from "./modules/backup/service.js";
+import * as consult from "./modules/consult/service.js";
+import * as pharmacy from "./modules/pharmacy/catalog.js";
+import * as pharmacyTx from "./modules/pharmacy/transactions.js";
+import { DrugSchedule } from "@ojas/shared";
 
 export interface AppOptions {
   db: Db;
@@ -57,6 +61,12 @@ export const SESSION_COOKIE = "ojas_session";
 const dateParam = (v: unknown): string => {
   if (v === undefined) return localDate();
   if (!isIsoDate(v)) throw new AppError(400, "invalid_date", "Date must be YYYY-MM-DD");
+  return v;
+};
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const idParam = (v: string): string => {
+  if (!UUID.test(v)) throw new AppError(404, "not_found", "Not found");
   return v;
 };
 
@@ -281,6 +291,64 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     const { visitDate } = await setStatus(db, actorOf(req), req.params.id, req.body?.status);
     notifyQueue(visitDate);
     return { ok: true };
+  });
+
+  // ── OPD consultation ──
+  type ById = { Params: { id: string } };
+  const afterSave = (r: consult.SaveResult, appointmentId: string) => {
+    realtime.broadcast({ type: "consult.changed", appointmentId });
+    if (r.queueChanged) notifyQueue(r.visitDate);
+    return r.encounter;
+  };
+  app.get<{ Querystring: { kind?: string; q?: string } }>("/api/consult/suggestions", need("consult.write"), async (req) =>
+    consult.suggestions(db, req.query.kind, req.query.q ?? ""),
+  );
+  app.get<ById>("/api/consult/:id", need("consult.read"), async (req) => consult.getConsult(db, idParam(req.params.id)));
+  app.get<ById>("/api/consult/:id/history", need("consult.read"), async (req) => {
+    const view = await consult.getConsult(db, idParam(req.params.id));
+    return consult.patientHistory(db, view.patient.id, view.appointmentId);
+  });
+  app.get<ById>("/api/consult/:id/versions", need("consult.read"), async (req) => consult.versions(db, idParam(req.params.id)));
+  app.put<ById>("/api/consult/:id/vitals", need("vitals.write"), async (req) =>
+    afterSave(await consult.saveVitals(db, actorOf(req), idParam(req.params.id), req.body), req.params.id),
+  );
+  app.put<ById>("/api/consult/:id/notes", need("consult.write"), async (req) =>
+    afterSave(await consult.saveNotes(db, actorOf(req), idParam(req.params.id), req.body), req.params.id),
+  );
+  app.post<ById>("/api/consult/:id/sign", need("consult.write"), async (req) =>
+    afterSave(await consult.sign(db, actorOf(req), idParam(req.params.id)), req.params.id),
+  );
+  app.post<ById>("/api/consult/:id/reopen", need("consult.write"), async (req) =>
+    afterSave(await consult.reopen(db, actorOf(req), idParam(req.params.id), req.body), req.params.id),
+  );
+
+  // ── Pharmacy ──
+  const ph = (p: Permission) => need(p);
+  const today = () => localDate(now());
+  app.get<{ Querystring: { q?: string; all?: string; inStock?: string } }>("/api/pharmacy/items", async (req) => {
+    const perms = req.session!.user.permissions;
+    if (!perms.some((p) => p.startsWith("pharmacy."))) throw new AppError(403, "forbidden", "You don't have permission to do this. Ask an administrator.");
+    return pharmacy.listItems(db, { q: req.query.q, includeInactive: req.query.all === "true", inStock: req.query.inStock === "true", today: today() });
+  });
+  app.post("/api/pharmacy/items", ph("pharmacy.stock"), async (req, reply) => reply.status(201).send(await pharmacy.createItem(db, actorOf(req), req.body)));
+  app.put<ById>("/api/pharmacy/items/:id", ph("pharmacy.stock"), async (req) => pharmacy.updateItem(db, actorOf(req), idParam(req.params.id), req.body));
+  app.get<ById>("/api/pharmacy/items/:id/batches", ph("pharmacy.sell"), async (req) => pharmacy.batchesFor(db, idParam(req.params.id), today()));
+  app.get("/api/pharmacy/suppliers", ph("pharmacy.purchase"), async () => pharmacy.listSuppliers(db));
+  app.post("/api/pharmacy/suppliers", ph("pharmacy.purchase"), async (req, reply) => reply.status(201).send(await pharmacy.saveSupplier(db, actorOf(req), null, req.body)));
+  app.put<ById>("/api/pharmacy/suppliers/:id", ph("pharmacy.purchase"), async (req) => pharmacy.saveSupplier(db, actorOf(req), idParam(req.params.id), req.body));
+  app.get("/api/pharmacy/purchases", ph("pharmacy.purchase"), async () => pharmacyTx.listPurchases(db));
+  app.post("/api/pharmacy/purchases", ph("pharmacy.purchase"), async (req, reply) => reply.status(201).send(await pharmacyTx.receivePurchase(db, actorOf(req), req.body, now())));
+  app.get("/api/pharmacy/stock/alerts", ph("pharmacy.stock"), async () => pharmacy.stockAlerts(db, today()));
+  app.post("/api/pharmacy/stock/adjust", ph("pharmacy.stock"), async (req) => pharmacy.adjustStock(db, actorOf(req), req.body));
+  app.get("/api/pharmacy/prescriptions", ph("pharmacy.sell"), async () => pharmacyTx.pendingPrescriptions(db, now()));
+  app.post("/api/pharmacy/sales", ph("pharmacy.sell"), async (req, reply) =>
+    reply.status(201).send(await pharmacyTx.sell(db, actorOf(req), req.body, now(), { allowDiscount: can(req.session!.user.role, "billing.discount") })),
+  );
+  app.get<{ Querystring: { date?: string } }>("/api/pharmacy/sales", ph("pharmacy.sell"), async (req) => pharmacyTx.listSales(db, dateParam(req.query.date ?? today())));
+  app.get<ById>("/api/pharmacy/sales/:id", ph("pharmacy.sell"), async (req) => pharmacyTx.getBill(db, idParam(req.params.id)));
+  app.get<{ Querystring: { from?: string; to?: string; schedule?: string } }>("/api/pharmacy/register", ph("pharmacy.reports"), async (req) => {
+    const schedules = (req.query.schedule ?? "H1,X").split(",").map((x) => DrugSchedule.parse(x.trim()));
+    return pharmacyTx.register(db, dateParam(req.query.from ?? today()), dateParam(req.query.to ?? req.query.from ?? today()), schedules);
   });
 
   // ── Web UI for LAN browsers / token displays ──

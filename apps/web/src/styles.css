@@ -109,4 +109,6 @@ body {
   body * { visibility: hidden; }
   .print-area, .print-area * { visibility: visible; }
   .print-area { display: block !important; position: absolute; inset: 0 auto auto 0; width: 72mm; }
+  /* Prescriptions: full page width (A5); see printPrescription(). */
+  .print-area.print-rx { width: 100%; font-family: ui-serif, Georgia, "Times New Roman", serif; }
 }

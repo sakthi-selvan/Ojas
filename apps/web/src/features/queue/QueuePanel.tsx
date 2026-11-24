@@ -2,7 +2,9 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AppointmentStatus, QueueItem } from "@ojas/shared";
 import { api, timeLabel, today } from "../../lib/api";
+import { Activity } from "lucide-react";
 import { Alert, Badge, Button, Card, cx } from "../../components/ui";
+import { VitalsDialog } from "../consult/VitalsDialog";
 import { useAuth } from "../../lib/auth";
 
 export const statusMeta: Record<AppointmentStatus, { label: string; tone: "neutral" | "ok" | "warn" | "danger" | "accent" }> = {
@@ -70,8 +72,10 @@ export function QueueRow({ item }: { item: QueueItem }) {
     onSettled: () => qc.invalidateQueries({ queryKey: ["queue"] }),
   });
   const { can } = useAuth();
+  const [vitalsOpen, setVitalsOpen] = useState(false);
   const action = can("queue.update") ? nextAction[item.status] : undefined;
   const meta = statusMeta[item.status];
+  const vitalsAllowed = can("vitals.write") && item.status !== "CANCELLED" && item.status !== "DONE";
   return (
     <li className={cx("flex items-center gap-3 rounded-lg px-2 py-2", item.status === "DONE" && "opacity-60")}>
       <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-surface-2 text-lg font-bold tabular-nums" aria-label={`Token ${item.token}`}>
@@ -79,11 +83,18 @@ export function QueueRow({ item }: { item: QueueItem }) {
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-semibold">{item.patientName}</div>
-        <div className="truncate text-xs text-ink-2">
+        <div className="flex items-center gap-1 truncate text-xs text-ink-2">
           {timeLabel(item.slotStart)} · {item.practitionerName}
+          {item.vitalsRecorded && <><span aria-hidden>·</span><Activity aria-hidden className="size-3 text-ok" /><span className="sr-only">Vitals recorded</span></>}
         </div>
       </div>
       <Badge tone={meta.tone}>{meta.label}</Badge>
+      {vitalsAllowed && (
+        <Button variant="ghost" className="min-h-8 px-2 text-xs" onClick={() => setVitalsOpen(true)} aria-label={`${item.vitalsRecorded ? "Edit vitals" : "Record vitals"}: ${item.patientName}`}>
+          Vitals
+        </Button>
+      )}
+      {vitalsOpen && <VitalsDialog item={item} onClose={() => setVitalsOpen(false)} />}
       {action && (
         <Button variant="ghost" className="min-h-8 px-2 text-xs" disabled={move.isPending} onClick={() => move.mutate(action.to)} aria-label={`${action.label}: ${item.patientName}`}>
           {action.label}

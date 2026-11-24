@@ -261,6 +261,222 @@ export const migrations: { id: number; name: string; sql: string }[] = [
       create index backup_run_started_idx on core.backup_run (started_at desc);
     `,
   },
+  {
+    id: 5,
+    name: "opd_consultation",
+    sql: `
+      -- One clinical encounter per OPD appointment. Vitals and the doctor's notes are versioned
+      -- separately (vitals_version / notes_version) so a nurse and a doctor never overwrite each other.
+      create table core.encounter (
+        id              uuid primary key,
+        appointment_id  uuid not null unique references core.appointment(id),
+        patient_id      uuid not null references core.patient(id),
+        practitioner_id uuid not null references core.practitioner(id),
+        status          text not null default 'DRAFT' check (status in ('DRAFT','SIGNED')),
+        version         integer not null default 0,
+        height_cm       double precision,
+        weight_kg       double precision,
+        temperature_f   double precision,
+        pulse           integer,
+        bp_systolic     integer,
+        bp_diastolic    integer,
+        resp_rate       integer,
+        spo2            integer,
+        blood_sugar     integer,
+        vitals_at       timestamptz,
+        vitals_by       text,
+        chief_complaint text not null default '',
+        history         text not null default '',
+        examination     text not null default '',
+        advice          text not null default '',
+        follow_up_date  date,
+        notes_version   integer not null default 0,
+        signed_at       timestamptz,
+        signed_by       text,
+        reopen_reason   text,
+        ${meta}
+      );
+      create index encounter_patient_idx on core.encounter (patient_id, created_at desc);
+
+      create table core.encounter_diagnosis (
+        id           uuid primary key,
+        encounter_id uuid not null references core.encounter(id),
+        line_no      integer not null,
+        text         text not null,
+        code         text not null default '',
+        unique (encounter_id, line_no)
+      );
+
+      create table core.encounter_medication (
+        id            uuid primary key,
+        encounter_id  uuid not null references core.encounter(id),
+        line_no       integer not null,
+        drug          text not null,
+        dose          text not null default '',
+        frequency     text not null default '',
+        timing        text not null default 'AFTER_FOOD',
+        duration_days integer,
+        instructions  text not null default '',
+        unique (encounter_id, line_no)
+      );
+
+      -- Lab orders stay ORDERED until the laboratory module picks them up.
+      create table core.encounter_lab_order (
+        id           uuid primary key,
+        encounter_id uuid not null references core.encounter(id),
+        line_no      integer not null,
+        test         text not null,
+        notes        text not null default '',
+        status       text not null default 'ORDERED',
+        unique (encounter_id, line_no)
+      );
+
+      -- Every signed version, exactly as signed. Corrections add a version; none is ever changed.
+      create table core.encounter_version (
+        encounter_id uuid not null references core.encounter(id),
+        version      integer not null,
+        content      jsonb not null,
+        signed_at    timestamptz not null,
+        signed_by    text not null,
+        reason       text,
+        primary key (encounter_id, version)
+      );
+    `,
+  },
+  {
+    id: 6,
+    name: "pharmacy",
+    sql: `
+      alter table core.facility add column drug_licence text not null default '';
+
+      create schema if not exists pharmacy;
+
+      create table pharmacy.item (
+        id             uuid primary key,
+        name           text not null,
+        name_search    text not null,
+        generic        text not null default '',
+        form           text not null,
+        strength       text not null default '',
+        manufacturer   text not null default '',
+        hsn            text not null default '',
+        gst_rate       integer not null check (gst_rate in (0,5,12,18,28)),
+        schedule       text not null default 'NONE' check (schedule in ('NONE','H','H1','X')),
+        pack_size      integer not null check (pack_size between 1 and 1000),
+        reorder_level  integer not null default 0 check (reorder_level >= 0),
+        active         boolean not null default true,
+        ${meta}
+      );
+      create unique index item_name_uq on pharmacy.item (name_search, strength, form);
+
+      create table pharmacy.supplier (
+        id           uuid primary key,
+        name         text not null unique,
+        gstin        text not null default '',
+        drug_licence text not null default '',
+        phone        text not null default '',
+        address      text not null default '',
+        ${meta}
+      );
+
+      -- A goods receipt: one supplier invoice. Never edited; stock fixes go through adjustments.
+      create table pharmacy.purchase (
+        id           uuid primary key,
+        purchase_no  text not null unique,
+        supplier_id  uuid not null references pharmacy.supplier(id),
+        invoice_no   text not null,
+        invoice_date date not null,
+        received_at  timestamptz not null,
+        taxable      bigint not null,
+        tax          bigint not null,
+        total        bigint not null,
+        ${meta},
+        unique (supplier_id, invoice_no)
+      );
+
+      -- Stock lives in batches. Price is per pack as printed; quantities are units.
+      create table pharmacy.batch (
+        id            uuid primary key,
+        item_id       uuid not null references pharmacy.item(id),
+        batch_no      text not null,
+        expiry        date not null,
+        mrp_per_pack  bigint not null check (mrp_per_pack > 0),
+        rate_per_pack bigint not null check (rate_per_pack >= 0),
+        pack_size     integer not null check (pack_size >= 1),
+        gst_rate      integer not null,
+        on_hand       integer not null default 0 check (on_hand >= 0),
+        ${meta}
+      );
+      -- The same batch at the same price is one stock line, however many invoices it came on.
+      create unique index batch_uq on pharmacy.batch (item_id, batch_no, mrp_per_pack);
+      create index batch_item_idx on pharmacy.batch (item_id, expiry) where on_hand > 0;
+
+      create table pharmacy.purchase_line (
+        id            uuid primary key,
+        purchase_id   uuid not null references pharmacy.purchase(id),
+        line_no       integer not null,
+        batch_id      uuid not null references pharmacy.batch(id),
+        packs         integer not null,
+        free_packs    integer not null default 0,
+        rate_per_pack bigint not null,
+        mrp_per_pack  bigint not null,
+        gst_rate      integer not null,
+        taxable       bigint not null,
+        tax           bigint not null,
+        unique (purchase_id, line_no)
+      );
+
+      create table pharmacy.sale (
+        id             uuid primary key,
+        bill_no        text not null unique,
+        issued_at      timestamptz not null,
+        patient_id     uuid references core.patient(id),
+        customer_name  text not null,
+        customer_phone text not null default '',
+        prescriber     text not null default '',
+        appointment_id uuid references core.appointment(id),
+        subtotal       bigint not null,
+        discount       bigint not null default 0,
+        total          bigint not null,
+        payment_mode   text not null check (payment_mode in ('CASH','UPI','CARD')),
+        check (discount <= subtotal and total = subtotal - discount),
+        ${meta}
+      );
+      create index sale_issued_idx on pharmacy.sale (issued_at desc);
+      create index sale_appointment_idx on pharmacy.sale (appointment_id) where appointment_id is not null;
+
+      create table pharmacy.sale_line (
+        id           uuid primary key,
+        sale_id      uuid not null references pharmacy.sale(id),
+        line_no      integer not null,
+        item_id      uuid not null references pharmacy.item(id),
+        batch_id     uuid not null references pharmacy.batch(id),
+        item_name    text not null,
+        hsn          text not null default '',
+        schedule     text not null,
+        qty          integer not null check (qty > 0),
+        mrp_per_pack bigint not null,
+        pack_size    integer not null,
+        gst_rate     integer not null,
+        amount       bigint not null,
+        unique (sale_id, line_no)
+      );
+      create index sale_line_schedule_idx on pharmacy.sale_line (schedule) where schedule <> 'NONE';
+
+      -- Every change to stock, with its reason: purchases, sales and adjustments.
+      create table pharmacy.stock_move (
+        id       uuid primary key,
+        batch_id uuid not null references pharmacy.batch(id),
+        at       timestamptz not null default now(),
+        qty      integer not null,
+        kind     text not null check (kind in ('PURCHASE','SALE','ADJUST')),
+        ref_id   uuid,
+        reason   text not null default '',
+        actor    text not null
+      );
+      create index stock_move_batch_idx on pharmacy.stock_move (batch_id, at);
+    `,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

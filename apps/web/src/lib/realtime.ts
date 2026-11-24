@@ -32,6 +32,8 @@ export function useServerEvents(): Connection {
         if (ev.type === "queue.changed") {
           void qc.invalidateQueries({ queryKey: ["queue"] });
           void qc.invalidateQueries({ queryKey: ["slots"] });
+        } else if (ev.type === "consult.changed") {
+          void qc.invalidateQueries({ queryKey: ["consult", ev.appointmentId] });
         }
       };
       ws.onclose = () => {

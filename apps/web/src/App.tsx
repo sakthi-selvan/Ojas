@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardList, Stethoscope, FlaskConical, Pill, BedDouble, Wifi, WifiOff, Users, Lock, LogOut, KeyRound, ChevronDown, Settings, Network } from "lucide-react";
+import { ClipboardList, Stethoscope, NotebookPen, FlaskConical, Pill, BedDouble, Wifi, WifiOff, Users, Lock, LogOut, KeyRound, ChevronDown, Settings, Network } from "lucide-react";
 import { ROLE_LABEL, type Permission } from "@ojas/shared";
 import { api } from "./lib/api";
 import { useAuth } from "./lib/auth";
@@ -8,18 +8,22 @@ import { useServerEvents } from "./lib/realtime";
 import { useHotkeys } from "./lib/hotkeys";
 import { FrontDesk } from "./features/front-desk/FrontDesk";
 import { QueueBoard } from "./features/queue/QueueBoard";
+import { ConsultPage } from "./features/consult/ConsultPage";
+import { PharmacyPage } from "./features/pharmacy/PharmacyPage";
 import { UsersPage } from "./features/admin/UsersPage";
 import { SettingsPage, type SettingsTab } from "./features/settings/SettingsPage";
 import { BackupBanner } from "./features/backup/BackupBanner";
 import { CredentialsForm } from "./features/auth/AuthScreens";
 import { Kbd, cx } from "./components/ui";
 
-type Page = "front-desk" | "queue" | "settings" | "users";
+type Page = "front-desk" | "queue" | "consult" | "pharmacy" | "settings" | "users";
 
 /** Each page appears only for roles that can use it. */
-const nav: { id: Page; label: string; icon: typeof ClipboardList; key: string; perm?: Permission }[] = [
+const nav: { id: Page; label: string; icon: typeof ClipboardList; key: string; perm?: Permission | Permission[] }[] = [
   { id: "front-desk", label: "Front desk", icon: ClipboardList, key: "Alt+1", perm: "appointments.book" },
+  { id: "consult", label: "Consultation", icon: NotebookPen, key: "Alt+3", perm: "consult.write" },
   { id: "queue", label: "OPD queue", icon: Stethoscope, key: "Alt+2" },
+  { id: "pharmacy", label: "Pharmacy", icon: Pill, key: "Alt+4", perm: ["pharmacy.sell", "pharmacy.stock", "pharmacy.purchase", "pharmacy.reports"] },
   { id: "settings", label: "Settings", icon: Settings, key: "Alt+8", perm: "settings.manage" },
   { id: "users", label: "Users", icon: Users, key: "Alt+9", perm: "users.manage" },
 ];
@@ -27,13 +31,12 @@ const nav: { id: Page; label: string; icon: typeof ClipboardList; key: string; p
 /** Upcoming modules are shown, but clearly disabled, so the product roadmap is visible without confusing anyone. */
 const upcoming = [
   { label: "Laboratory", icon: FlaskConical },
-  { label: "Pharmacy", icon: Pill },
   { label: "In-patients", icon: BedDouble },
 ];
 
 export function App() {
   const { can, lock } = useAuth();
-  const pages = nav.filter((n) => !n.perm || can(n.perm));
+  const pages = nav.filter((n) => !n.perm || [n.perm].flat().some((p) => can(p)));
   const [page, setPage] = useState<Page>(pages[0]!.id);
   const [settingsTab, setSettingsTab] = useState<{ tab: SettingsTab; n: number }>({ tab: "doctors", n: 0 });
   const openBackups = () => {
@@ -94,7 +97,7 @@ export function App() {
       </header>
       {can("settings.manage") && <BackupBanner onOpen={openBackups} />}
       <main id="main" className="flex-1">
-        {page === "front-desk" ? <FrontDesk /> : page === "users" ? <UsersPage /> : page === "settings" ? <SettingsPage key={settingsTab.n} initialTab={settingsTab.tab} /> : <QueueBoard />}
+        {page === "front-desk" ? <FrontDesk /> : page === "consult" ? <ConsultPage /> : page === "pharmacy" ? <PharmacyPage /> : page === "users" ? <UsersPage /> : page === "settings" ? <SettingsPage key={settingsTab.n} initialTab={settingsTab.tab} /> : <QueueBoard />}
       </main>
     </div>
   );
