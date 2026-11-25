@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, InjectOptions } from "fastify";
-import type { DaySlots, Practitioner, Patient, Receipt, Slot } from "@ojas/shared";
+import type { DayReport, DaySlots, Practitioner, Patient, Receipt, Slot } from "@ojas/shared";
 import type { Db } from "../src/db/index.js";
 import { financialYear } from "../src/core/numbering.js";
-import { makeApp, setupAdmin, type Client } from "./helpers.js";
+import { makeApp, setupAdmin, userWithRole, type Client } from "./helpers.js";
 
 // Fixed "now": 2026-11-20 10:02 local time, so slots are deterministic.
 const NOW = new Date(2026, 10, 20, 10, 2);
@@ -149,5 +149,51 @@ describe("queue & audit", () => {
     expect((await app.inject({ url: "/api/audit/verify" })).json()).toMatchObject({ ok: true });
     await db.query("update core.audit_event set actor = 'mallory' where seq = 2");
     expect((await app.inject({ url: "/api/audit/verify" })).json()).toMatchObject({ ok: false, brokenAt: 2 });
+  });
+});
+
+describe("cancelling a bill and the day-end report", () => {
+  it("cancels with a full refund before the consult, frees the slot, and the day report nets it out", async () => {
+    const p = (await register({ name: "Refund Test", sex: "F", phone: "9840099001", ageYears: 30 }, true)).json() as Patient;
+    const slot = await firstFreeSlot();
+    const r = (await app.inject({
+      method: "POST", url: "/api/front-desk/checkout",
+      payload: { patientId: p.id, practitionerId: doctor.id, slotStart: slot.start, paymentMode: "UPI", idempotencyKey: randomUUID() },
+    })).json() as Receipt;
+    expect(r.cancelled).toBeNull();
+
+    // Reception can take money but not give it back.
+    const desk = (await userWithRole(server, admin, "RECEPTION", "deskr")).client;
+    expect((await desk.post(`/api/invoices/${r.invoiceId}/cancel`, { reason: "Doctor on emergency", refundMode: "UPI" })).statusCode).toBe(403);
+    expect((await app.inject({ method: "POST", url: `/api/invoices/${r.invoiceId}/cancel`, payload: { reason: "x", refundMode: "UPI" } })).statusCode).toBe(400);
+
+    const before = (await app.inject("/api/reports/day?date=2026-11-20")).json() as DayReport;
+    const c = await app.inject({ method: "POST", url: `/api/invoices/${r.invoiceId}/cancel`, payload: { reason: "Doctor called to an emergency", refundMode: "UPI" } });
+    expect(c.statusCode, c.body).toBe(200);
+    expect((c.json() as Receipt).cancelled).toMatchObject({ reason: "Doctor called to an emergency", refundMode: "UPI", refunded: r.total });
+    expect((await app.inject({ method: "POST", url: `/api/invoices/${r.invoiceId}/cancel`, payload: { reason: "Doctor called to an emergency", refundMode: "UPI" } })).json().code).toBe("already_cancelled");
+
+    // The slot is free again and the visit is off the queue.
+    expect((await firstFreeSlot()).start).toBe(slot.start);
+    const queue = (await app.inject("/api/queue?date=2026-11-20")).json() as { appointmentId: string }[];
+    expect(queue.some((x) => x.appointmentId === r.appointmentId)).toBe(false);
+
+    const after = (await app.inject("/api/reports/day?date=2026-11-20")).json() as DayReport;
+    const upi = (d: DayReport) => d.rows.find((x) => x.source === "OPD" && x.mode === "UPI")!;
+    expect(upi(after).received).toBe(upi(before).received);
+    expect(upi(after).refunded).toBe(upi(before).refunded + r.total);
+    expect(after.cancellations.map((x) => x.billNo)).toContain(r.invoiceNo);
+    expect(after.byUser.find((u) => u.mode === "UPI")!.refunded).toBe(r.total);
+    expect((await desk.get("/api/reports/day?date=2026-11-20")).statusCode).toBe(200);
+  });
+
+  it("refuses once the doctor has seen the patient", async () => {
+    const p = (await register({ name: "Seen Already", sex: "M", phone: "9840099002", ageYears: 40 }, true)).json() as Patient;
+    const r = (await app.inject({
+      method: "POST", url: "/api/front-desk/checkout",
+      payload: { patientId: p.id, practitionerId: doctor.id, slotStart: (await firstFreeSlot()).start, paymentMode: "CASH", idempotencyKey: randomUUID() },
+    })).json() as Receipt;
+    await app.inject({ method: "PATCH", url: `/api/appointments/${r.appointmentId}/status`, payload: { status: "IN_CONSULT" } });
+    expect((await app.inject({ method: "POST", url: `/api/invoices/${r.invoiceId}/cancel`, payload: { reason: "Patient unhappy", refundMode: "CASH" } })).json().code).toBe("consult_started");
   });
 });

@@ -1,8 +1,8 @@
 import type {
-  Admission, AdmissionSummary, AdmitInput, ChargeInput, DepositInput, DoseInput, IpdService, MedOrderInput, NoteInput, ServiceInput, SettleInput,
+  Admission, AdmissionSummary, AdmitInput, AmendSummaryInput, EmergencyAdmitInput, MlcInput, PatientDetailsInput, Inpatient, WardMeds, ChargeInput, DepositInput, DoseInput, IpdService, MedOrderInput, NoteInput, ServiceInput, SettleInput,
   SummaryInput, TransferInput, Ward, WardInput,
   AmendInput, CollectInput, LabBillInput, LabOrderDetail, LabOrderSummary, LabRequest, LabTest, OrderTest, PatientLabResult, RejectSampleInput, ResultsInput, TestInput,
-  CheckoutInput, Patient, PatientSearchResult, Practitioner, QueueItem, QuickRegisterInput, Receipt, DaySlots, AppointmentStatus,
+  CheckoutInput, CancelBillInput, DayReport, Patient, PatientSearchResult, Practitioner, QueueItem, QuickRegisterInput, Receipt, DaySlots, AppointmentStatus,
   SystemInfo, BackupStatus, BackupConfigInput, BackupRun, BackupFile, RestoreInput, RestoreResult,
   Facility, FacilityInput, PublicFacility, PractitionerInput, Holiday, HolidayInput, Leave, LeaveInput,
   ConsultView, Encounter, PastVisit, Suggestion, SuggestionKind, VitalsInput, ConsultNotesInput,
@@ -67,6 +67,8 @@ export const api = {
   slots: (practitionerId: string, date: string) => request<DaySlots>("GET", `/practitioners/${practitionerId}/slots?date=${date}`),
   checkout: (input: CheckoutInput) => request<Receipt>("POST", "/front-desk/checkout", input),
   receipt: (invoiceId: string) => request<Receipt>("GET", `/invoices/${invoiceId}/receipt`),
+  cancelBill: (invoiceId: string, input: CancelBillInput) => request<Receipt>("POST", `/invoices/${invoiceId}/cancel`, input),
+  dayReport: (date: string) => request<DayReport>("GET", `/reports/day?date=${date}`),
   queue: (date: string) => request<QueueItem[]>("GET", `/queue?date=${date}`),
   setStatus: (appointmentId: string, status: AppointmentStatus) => request<{ ok: true }>("PATCH", `/appointments/${appointmentId}/status`, { status }),
 
@@ -100,6 +102,7 @@ export const api = {
   createLabTest: (input: TestInput) => request<LabTest>("POST", "/lab/tests", input),
   updateLabTest: (id: string, input: TestInput) => request<LabTest>("PUT", `/lab/tests/${id}`, input),
   addStarterTests: () => request<{ added: number; skipped: number }>("POST", "/lab/tests/starter"),
+  addChildRanges: () => request<{ tests: number; parameters: number }>("POST", "/lab/tests/child-ranges", {}),
   labRequests: () => request<LabRequest[]>("GET", "/lab/requests"),
   billLab: (input: LabBillInput) => request<LabOrderDetail>("POST", "/lab/orders", input),
   labOrders: (date: string) => request<LabOrderSummary[]>("GET", `/lab/orders?date=${date}`),
@@ -112,6 +115,8 @@ export const api = {
   patientLabResults: (patientId: string) => request<PatientLabResult[]>("GET", `/lab/patients/${patientId}/results`),
 
   // In-patients
+  wardDoses: () => request<WardMeds[]>("GET", "/ipd/doses"),
+  inpatients: () => request<Inpatient[]>("GET", "/ipd/inpatients"),
   wards: (all = false) => request<Ward[]>("GET", `/ipd/wards${all ? "?all=true" : ""}`),
   createWard: (input: WardInput) => request<Ward>("POST", "/ipd/wards", input),
   updateWard: (id: string, input: WardInput) => request<Ward>("PUT", `/ipd/wards/${id}`, input),
@@ -121,7 +126,11 @@ export const api = {
   updateService: (id: string, input: ServiceInput) => request<IpdService>("PUT", `/ipd/services/${id}`, input),
   admissions: (status: "ADMITTED" | "DISCHARGED", q = "") => request<AdmissionSummary[]>("GET", `/ipd/admissions?status=${status}&q=${encodeURIComponent(q)}`),
   admission: (id: string) => request<Admission>("GET", `/ipd/admissions/${id}`),
+  amendSummary: (id: string, input: AmendSummaryInput) => request<Admission>("POST", `/ipd/admissions/${id}/summary/amend`, input),
   admit: (input: AdmitInput) => request<Admission>("POST", "/ipd/admissions", input),
+  admitEmergency: (input: EmergencyAdmitInput) => request<Admission>("POST", "/ipd/emergency", input),
+  setMlc: (id: string, input: MlcInput) => request<Admission>("PUT", `/ipd/admissions/${id}/mlc`, input),
+  completePatient: (id: string, input: PatientDetailsInput) => request<Admission>("POST", `/ipd/admissions/${id}/patient`, input),
   transfer: (id: string, input: TransferInput) => request<Admission>("POST", `/ipd/admissions/${id}/transfer`, input),
   addNote: (id: string, input: NoteInput) => request<Admission>("POST", `/ipd/admissions/${id}/notes`, input),
   addIpdVitals: (id: string, input: VitalsInput) => request<Admission>("POST", `/ipd/admissions/${id}/vitals`, input),

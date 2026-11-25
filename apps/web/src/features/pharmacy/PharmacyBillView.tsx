@@ -1,10 +1,9 @@
 import { CheckCircle2, Printer } from "lucide-react";
-import { expiryLabel, formatINR, type PharmacyBill } from "@ojas/shared";
+import { COUNTER_MODE_LABEL, expiryLabel, formatINR, type PharmacyBill } from "@ojas/shared";
 import { dateTimeLabel } from "../../lib/api";
 import { useHotkeys } from "../../lib/hotkeys";
 import { Button } from "../../components/ui";
 
-const modeLabel = { CASH: "Cash", UPI: "UPI", CARD: "Card" } as const;
 
 /** Desktop app: silent print to the default (receipt) printer. Browser: the print dialog. */
 export const printBill = () => (window.ojas ? void window.ojas.print({ silent: true }) : window.print());
@@ -16,7 +15,7 @@ export function PharmacyBillView({ bill, onNext }: { bill: PharmacyBill; onNext:
       <div role="status" className="flex items-center gap-4 rounded-xl bg-ok-soft p-4 text-ok">
         <CheckCircle2 aria-hidden className="size-8 shrink-0" />
         <div className="flex-1">
-          <div className="font-semibold">Paid {formatINR(bill.total)} by {modeLabel[bill.paymentMode]} · {bill.billNo}</div>
+          <div className="font-semibold">{bill.paymentMode === "IPD" ? `${formatINR(bill.total)} added to IP bill ${bill.admissionNo}` : `Paid ${formatINR(bill.total)} by ${COUNTER_MODE_LABEL[bill.paymentMode]}`} · {bill.billNo}</div>
           <div className="text-sm">{bill.customerName} · {bill.lines.length} line{bill.lines.length === 1 ? "" : "s"}</div>
         </div>
       </div>
@@ -62,7 +61,7 @@ export function PrintablePharmacyBill({ bill: b }: { bill: PharmacyBill }) {
       <hr className="my-1 border-dashed border-black" />
       <div className="flex justify-between"><span>Total (MRP)</span><span>{formatINR(b.subtotal)}</span></div>
       {b.discount > 0 && <div className="flex justify-between"><span>Discount</span><span>-{formatINR(b.discount)}</span></div>}
-      <div className="flex justify-between text-[13px] font-bold"><span>NET ({modeLabel[b.paymentMode]})</span><span>{formatINR(b.total)}</span></div>
+      <div className="flex justify-between text-[13px] font-bold"><span>{b.paymentMode === "IPD" ? `TO IP BILL ${b.admissionNo}` : `NET (${COUNTER_MODE_LABEL[b.paymentMode]})`}</span><span>{formatINR(b.total)}</span></div>
       <hr className="my-1 border-dashed border-black" />
       <table className="w-full">
         <thead><tr><th className="text-left font-normal">GST%</th><th className="text-right font-normal">Taxable</th><th className="text-right font-normal">CGST</th><th className="text-right font-normal">SGST</th></tr></thead>

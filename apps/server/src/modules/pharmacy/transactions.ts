@@ -8,6 +8,7 @@ import {
 } from "@ojas/shared";
 import type { Db, Queryable } from "../../db/index.js";
 import { audit, type Actor } from "../../core/audit.js";
+import { chargeTo } from "../ipd/admissions.js";
 import { AppError, isUniqueViolation } from "../../core/errors.js";
 import { uuidv7 } from "../../core/ids.js";
 import { atLocal, localDate } from "../../core/clock.js";
@@ -151,6 +152,9 @@ export async function sell(db: Db, actor: Actor, raw: unknown, now = new Date(),
       if (v.appointmentId && !(await q.query("select 1 from core.appointment where id = $1", [v.appointmentId])).rows[0]) {
         throw new AppError(422, "appointment_not_found", "That prescription's visit was not found");
       }
+      if (v.admissionId && !v.patientId) throw new AppError(422, "patient_required", "Choose the in-patient to charge");
+      const ip = v.admissionId ? await chargeTo(q, v.admissionId, v.patientId) : null;
+      const mode = ip ? "IPD" : v.paymentMode;
 
       const items = new Map<string, Item>();
       const allocations: Allocation[] = [];
@@ -207,9 +211,9 @@ export async function sell(db: Db, actor: Actor, raw: unknown, now = new Date(),
       const id = uuidv7();
       const billNo = await series(q, "PH", "pharmacy-bill", now);
       await q.query(
-        `insert into pharmacy.sale (id, bill_no, issued_at, patient_id, customer_name, customer_phone, prescriber, appointment_id, subtotal, discount, total, payment_mode, created_by, updated_by)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)`,
-        [id, billNo, now.toISOString(), v.patientId ?? null, v.customerName, v.customerPhone, v.prescriber, v.appointmentId ?? null, subtotal, v.discount, subtotal - v.discount, v.paymentMode, actor.user],
+        `insert into pharmacy.sale (id, bill_no, issued_at, patient_id, customer_name, customer_phone, prescriber, appointment_id, subtotal, discount, total, payment_mode, admission_id, created_by, updated_by)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)`,
+        [id, billNo, now.toISOString(), v.patientId ?? null, v.customerName, v.customerPhone, v.prescriber, v.appointmentId ?? null, subtotal, v.discount, subtotal - v.discount, mode, v.admissionId ?? null, actor.user],
       );
       for (const [i, l] of lines.entries()) {
         await q.query(
@@ -220,7 +224,7 @@ export async function sell(db: Db, actor: Actor, raw: unknown, now = new Date(),
         await q.query("insert into pharmacy.stock_move (id, batch_id, qty, kind, ref_id, actor) values ($1,$2,$3,'SALE',$4,$5)", [uuidv7(), l.batchId, -l.qty, id, actor.user]);
       }
       await audit(q, actor, "pharmacy.sale", "sale", id, {
-        billNo, total: subtotal - v.discount, discount: v.discount, mode: v.paymentMode, lines: lines.length,
+        billNo, total: subtotal - v.discount, discount: v.discount, mode, admission: ip?.admissionNo, lines: lines.length,
         scheduled: lines.filter((l) => l.schedule !== "NONE").map((l) => l.itemName), prescriber: v.prescriber || undefined,
       });
       const bill = await getBill(q, id);
@@ -240,9 +244,10 @@ export async function sell(db: Db, actor: Actor, raw: unknown, now = new Date(),
 export async function getBill(q: Queryable, id: string): Promise<PharmacyBill> {
   const { rows } = await q.query<{
     id: string; bill_no: string; issued_at: string; customer_name: string; customer_phone: string; uhid: string | null; prescriber: string;
-    subtotal: number; discount: number; total: number; payment_mode: PharmacyBill["paymentMode"]; created_by: string;
+    subtotal: number; discount: number; total: number; payment_mode: PharmacyBill["paymentMode"]; created_by: string; admission_id: string | null; admission_no: string | null;
   }>(
-    `select s.*, p.uhid from pharmacy.sale s left join core.patient p on p.id = s.patient_id where s.id = $1`,
+    `select s.*, p.uhid, a.admission_no from pharmacy.sale s left join core.patient p on p.id = s.patient_id
+       left join ipd.admission a on a.id = s.admission_id where s.id = $1`,
     [id],
   );
   const s = rows[0];
@@ -258,7 +263,7 @@ export async function getBill(q: Queryable, id: string): Promise<PharmacyBill> {
   const f = (await q.query<PharmacyBill["facility"]>(`select name, address, phone, gstin, drug_licence as "drugLicence" from core.facility where id = 1`)).rows[0]!;
   return {
     id: s.id, billNo: s.bill_no, issuedAt: s.issued_at, customerName: s.customer_name, customerPhone: s.customer_phone, uhid: s.uhid, prescriber: s.prescriber,
-    lines, subtotal: s.subtotal, discount: s.discount, total: s.total, gst: gstBreakup(lines, s.discount), paymentMode: s.payment_mode, soldBy: s.created_by, facility: f,
+    lines, subtotal: s.subtotal, discount: s.discount, total: s.total, gst: gstBreakup(lines, s.discount), paymentMode: s.payment_mode, admissionId: s.admission_id, admissionNo: s.admission_no, soldBy: s.created_by, facility: f,
   };
 }
 

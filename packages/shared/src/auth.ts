@@ -23,6 +23,10 @@ export const PERMISSIONS = [
   "appointments.book",
   "billing.collect",
   "billing.discount",
+  /** Cancel a paid bill and give the money back. */
+  "billing.refund",
+  /** The day-end collection report. */
+  "billing.report",
   "queue.update",
   "consult.read",
   "consult.write",
@@ -51,8 +55,8 @@ export type Permission = (typeof PERMISSIONS)[number];
 
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   ADMIN: PERMISSIONS,
-  RECEPTION: ["patients.read", "patients.write", "appointments.book", "billing.collect", "queue.update", "lab.order", "ipd.read", "ipd.admit", "ipd.bill"],
-  ACCOUNTS: ["patients.read", "billing.collect", "billing.discount", "pharmacy.reports", "ipd.read", "ipd.bill"],
+  RECEPTION: ["patients.read", "patients.write", "appointments.book", "billing.collect", "billing.report", "queue.update", "lab.order", "ipd.read", "ipd.admit", "ipd.bill"],
+  ACCOUNTS: ["patients.read", "billing.collect", "billing.discount", "billing.refund", "billing.report", "pharmacy.reports", "ipd.read", "ipd.bill"],
   DOCTOR: ["patients.read", "queue.update", "consult.read", "consult.write", "vitals.write", "lab.read", "ipd.read", "ipd.chart", "ipd.orders"],
   NURSE: ["patients.read", "queue.update", "consult.read", "vitals.write", "lab.read", "ipd.read", "ipd.chart"],
   LAB: ["patients.read", "patients.write", "lab.order", "lab.collect", "lab.result", "lab.verify", "lab.tests", "lab.read"],

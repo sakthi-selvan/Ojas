@@ -3,7 +3,7 @@
  * the A4 report. Each is rendered only while printing, so only one ever reaches the printer.
  */
 import { Fragment } from "react";
-import { FLAG_LABEL, LAB_SECTION_LABEL, SAMPLE_SHORT, ageLabel, formatINR, type LabOrderDetail, type LabSection, type OrderTest } from "@ojas/shared";
+import { COUNTER_MODE_LABEL, FLAG_LABEL, LAB_SECTION_LABEL, SAMPLE_SHORT, ageLabel, formatINR, type LabOrderDetail, type LabSection, type OrderTest } from "@ojas/shared";
 import { dateTimeLabel } from "../../lib/api";
 import { usePrintJob } from "../../lib/print";
 import { Barcode } from "./barcode";
@@ -44,7 +44,6 @@ function PrintableLabels({ order, sampleIds }: { order: LabOrderDetail; sampleId
   );
 }
 
-const modeLabel = { CASH: "Cash", UPI: "UPI", CARD: "Card" } as const;
 
 function PrintableLabBill({ order: o }: { order: LabOrderDetail }) {
   return (
@@ -67,7 +66,7 @@ function PrintableLabBill({ order: o }: { order: LabOrderDetail }) {
       ))}
       <hr className="my-1 border-dashed border-black" />
       {o.discount > 0 && <div className="flex justify-between"><span>Discount</span><span>−{formatINR(o.discount)}</span></div>}
-      <div className="flex justify-between font-bold"><span>PAID ({modeLabel[o.paymentMode]})</span><span>{formatINR(o.total)}</span></div>
+      <div className="flex justify-between font-bold"><span>{o.paymentMode === "IPD" ? `TO IP BILL ${o.admissionNo}` : `PAID (${COUNTER_MODE_LABEL[o.paymentMode]})`}</span><span>{formatINR(o.total)}</span></div>
       <div className="mt-1">Reports from {dateTimeLabel(o.tests.reduce((m, t) => (t.dueAt > m ? t.dueAt : m), o.orderedAt))}. Billed by {o.billedBy}.</div>
     </div>
   );

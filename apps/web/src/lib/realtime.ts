@@ -42,6 +42,8 @@ export function useServerEvents(): Connection {
         } else if (ev.type === "ipd.changed") {
           void qc.invalidateQueries({ queryKey: ["ipd-wards"] });
           void qc.invalidateQueries({ queryKey: ["ipd-admissions"] });
+          void qc.invalidateQueries({ queryKey: ["ipd-inpatients"] });
+          void qc.invalidateQueries({ queryKey: ["ipd-doses"] });
           if (ev.admissionId) void qc.invalidateQueries({ queryKey: ["ipd-admission", ev.admissionId] });
         }
       };

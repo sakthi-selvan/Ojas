@@ -1,26 +1,32 @@
 import { useState } from "react";
-import { BedDouble, DoorOpen, History, Settings2 } from "lucide-react";
+import { BedDouble, DoorOpen, History, Pill, Settings2, Siren } from "lucide-react";
 import type { Permission } from "@ojas/shared";
 import { useAuth } from "../../lib/auth";
 import { cx } from "../../components/ui";
 import { BedBoard } from "./BedBoard";
 import { AdmitPanel } from "./AdmitPanel";
+import { EmergencyPanel } from "./EmergencyPanel";
 import { DischargedList } from "./DischargedList";
 import { WardsPanel } from "./WardsPanel";
 import { AdmissionView } from "./AdmissionView";
+import { DoseRound } from "./DoseRound";
 
-type Tab = "beds" | "admit" | "discharged" | "wards";
-const tabs: { id: Tab; label: string; icon: typeof BedDouble; perm: Permission }[] = [
-  { id: "beds", label: "Beds", icon: BedDouble, perm: "ipd.read" },
-  { id: "admit", label: "Admit", icon: DoorOpen, perm: "ipd.admit" },
-  { id: "discharged", label: "Discharged", icon: History, perm: "ipd.read" },
-  { id: "wards", label: "Wards & charges", icon: Settings2, perm: "ipd.setup" },
+type Tab = "beds" | "doses" | "emergency" | "admit" | "discharged" | "wards";
+/** A tab shows for anyone with one of its permissions. The doctor on duty can admit through casualty. */
+const tabs: { id: Tab; label: string; icon: typeof BedDouble; perms: Permission[] }[] = [
+  { id: "beds", label: "Beds", icon: BedDouble, perms: ["ipd.read"] },
+  { id: "doses", label: "Doses", icon: Pill, perms: ["ipd.read"] },
+  { id: "emergency", label: "Emergency", icon: Siren, perms: ["ipd.admit", "ipd.orders"] },
+  { id: "admit", label: "Admit", icon: DoorOpen, perms: ["ipd.admit"] },
+  { id: "discharged", label: "Discharged", icon: History, perms: ["ipd.read"] },
+  { id: "wards", label: "Wards & charges", icon: Settings2, perms: ["ipd.setup"] },
 ];
 
 /** In-patients: the bed board, admitting, recent discharges, and ward setup. Opening a patient shows their chart. */
 export function IpdPage() {
   const { can } = useAuth();
-  const shown = tabs.filter((t) => can(t.perm));
+  const shown = tabs.filter((t) => t.perms.some((p) => can(p)));
+  const canEmergency = can("ipd.admit") || can("ipd.orders");
   const [tab, setTab] = useState<Tab>(shown[0]?.id ?? "beds");
   const [openId, setOpenId] = useState<string | null>(null);
   const [bedForAdmit, setBedForAdmit] = useState<string | null>(null);
@@ -57,10 +63,16 @@ export function IpdPage() {
         {tab === "beds" && (
           <BedBoard
             onOpen={setOpenId}
-            onAdmit={can("ipd.admit") ? (bedId) => { setBedForAdmit(bedId); setTab("admit"); } : undefined}
+            onAdmit={canEmergency ? (bedId, emergency) => {
+              const to = emergency || !can("ipd.admit") ? "emergency" : "admit";
+              setBedForAdmit(bedId);
+              setTab(to);
+            } : undefined}
             onSetup={can("ipd.setup") ? () => setTab("wards") : undefined}
           />
         )}
+        {tab === "doses" && <DoseRound onOpen={setOpenId} />}
+        {tab === "emergency" && <EmergencyPanel key={bedForAdmit ?? ""} initialBedId={bedForAdmit} onOpen={(id) => { setBedForAdmit(null); setOpenId(id); }} />}
         {tab === "admit" && <AdmitPanel key={bedForAdmit ?? ""} initialBedId={bedForAdmit} onOpen={(id) => { setBedForAdmit(null); setOpenId(id); }} />}
         {tab === "discharged" && <DischargedList onOpen={setOpenId} />}
         {tab === "wards" && <WardsPanel />}

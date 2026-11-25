@@ -67,6 +67,7 @@ function Header({ a, title }: { a: Admission; title: string }) {
       <header className="border-b-2 border-black pb-2 text-center">
         <div className="text-[16pt] font-bold">{a.facility.name}</div>
         <div>{a.facility.address}{a.facility.phone ? ` · Ph: ${a.facility.phone}` : ""}{a.facility.email ? ` · ${a.facility.email}` : ""}</div>
+        {a.facility.gstin && <div>GSTIN: {a.facility.gstin}</div>}
         <div className="mt-1 text-[12pt] font-bold tracking-wide">{title}</div>
       </header>
       <table className="my-2 w-full text-[10pt]">
@@ -75,6 +76,9 @@ function Header({ a, title }: { a: Admission; title: string }) {
           <tr><td>Age / Sex: {a.patient.dob ? ageLabel(a.patient.dob) : "—"} / {sexLabel[a.patient.sex]} · ID: {a.patient.uhid}</td><td>Admitted: {dateTimeLabel(a.admittedAt)}</td></tr>
           <tr><td>Doctor: {a.doctor.name}{a.doctor.department ? ` (${a.doctor.department})` : ""}</td><td>{a.dischargedAt ? `Discharged: ${dateTimeLabel(a.dischargedAt)}` : "Still admitted"}</td></tr>
           <tr><td>Ward: {wardBed(a)}</td><td>Phone: {a.patient.phone}</td></tr>
+          {(a.emergency || a.mlc) && (
+            <tr><td colSpan={2}>{a.emergency ? "Admitted through casualty" : ""}{a.emergency && a.mlc ? " · " : ""}{a.mlc ? <b>Medico-legal case{a.mlc.no ? ` no. ${a.mlc.no}` : ""}{a.mlc.policeStation ? `, ${a.mlc.policeStation} police station` : ""}</b> : null}</td></tr>
+          )}
         </tbody>
       </table>
     </>
@@ -116,7 +120,10 @@ function PrintableSummary({ a }: { a: Admission }) {
       {s.followUpDate && <p className="mt-3"><b>Review on:</b> {dateLabel(s.followUpDate)}</p>}
       {s.dischargeType !== "DEATH" && <p className="mt-3 text-[9.5pt]">In an emergency, or if the symptoms come back, come to the hospital at once.</p>}
       <footer className="mt-12 flex justify-between text-[10pt]">
-        <span>{a.summarySignedAt ? `Signed ${dateTimeLabel(a.summarySignedAt)}` : "Not signed"}</span>
+        <span>
+          {a.summarySignedAt ? `Signed ${dateTimeLabel(a.summarySignedAt)}` : "Not signed"}
+          {a.amendments.length > 0 && <><br /><span className="text-[9pt]">Corrected after discharge: {a.amendments.map((x) => `${dateTimeLabel(x.at)} (${x.reason})`).join("; ")}</span></>}
+        </span>
         <span className="text-right">
           <b>{a.doctor.name}</b>{a.doctor.qualification ? `, ${a.doctor.qualification}` : ""}<br />
           {a.doctor.registrationNo && <span className="text-[9pt]">Reg. no {a.doctor.registrationNo}<br /></span>}
@@ -150,7 +157,13 @@ function PrintableBill({ a }: { a: Admission }) {
         <tfoot className="text-right">
           <tr className="border-t border-black"><td colSpan={3}>Total</td><td className="tabular-nums">{formatINR(b.subtotal)}</td></tr>
           {b.discount > 0 && <tr><td colSpan={3}>Discount</td><td className="tabular-nums">− {formatINR(b.discount)}</td></tr>}
-          {b.discount > 0 && <tr className="font-bold"><td colSpan={3}>Net amount</td><td className="tabular-nums">{formatINR(b.total)}</td></tr>}
+          {b.taxLines.map((t, i) => (
+            <tr key={`tax-${i}`}>
+              <td colSpan={3}>GST on room rent ({t.description}): taxable {formatINR(t.taxable)}, CGST {t.ratePercent / 2}% {formatINR(t.cgst)} + SGST {t.ratePercent / 2}% {formatINR(t.sgst)}</td>
+              <td className="tabular-nums">{formatINR(t.amount)}</td>
+            </tr>
+          ))}
+          {(b.discount > 0 || b.tax > 0) && <tr className="font-bold"><td colSpan={3}>Net amount</td><td className="tabular-nums">{formatINR(b.total)}</td></tr>}
         </tfoot>
       </table>
       <h2 className="mt-4 border-b border-black text-[10.5pt] font-bold uppercase">Payments</h2>

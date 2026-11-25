@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 import { Paise, PaymentMode, type Sex } from "./primitives";
+import type { CounterMode } from "./pharmacy";
 
 const text = (max: number) => z.string().trim().max(max);
 const num = z.number().finite();
@@ -33,7 +34,11 @@ export const SAMPLE_SHORT: Record<SampleType, string> = {
 export const RangeSex = z.enum(["ANY", "M", "F"]);
 export type RangeSex = z.infer<typeof RangeSex>;
 
-/** One reference range; the most specific one that fits the patient (sex, then age) is used. Ages are in years. */
+/**
+ * One reference range; the most specific one that fits the patient (sex, then age) is used. Ages are
+ * in years, fractional for babies (7 days is 7/365.25). A range may carry its own critical limits
+ * (a newborn's haemoglobin of 21 is normal, an adult's is not).
+ */
 export const RefRange = z
   .object({
     sex: RangeSex.default("ANY"),
@@ -41,6 +46,8 @@ export const RefRange = z
     ageTo: num.min(0).max(130).nullable().default(null),
     low: num.nullable().default(null),
     high: num.nullable().default(null),
+    criticalLow: num.nullable().default(null),
+    criticalHigh: num.nullable().default(null),
   })
   .refine((r) => r.low !== null || r.high !== null, { message: "Enter a low or high limit", path: ["low"] })
   .refine((r) => r.low === null || r.high === null || r.low <= r.high, { message: "Low is above high", path: ["high"] })
@@ -57,7 +64,7 @@ export const ParameterInput = z.object({
   unit: text(30).default(""),
   kind: ParamKind.default("NUMERIC"),
   decimals: z.number().int().min(0).max(4).default(1),
-  ranges: z.array(RefRange).max(12).default([]),
+  ranges: z.array(RefRange).max(24).default([]),
   /** Values beyond these are critical (flagged LL / HH, to be phoned to the doctor). */
   criticalLow: num.nullable().default(null),
   criticalHigh: num.nullable().default(null),
@@ -121,6 +128,35 @@ export function pickRange(ranges: RefRange[], sex: Sex, age: number | null): Ref
   return fits.sort((a, b) => score(b) - score(a))[0] ?? null;
 }
 
+/** Under this age, a range with no age limits is an adult range and is marked so on the report. */
+export const ADULT_AGE = 18;
+
+const DAY = 1 / 365.25;
+const MONTH = 1 / 12;
+export type AgeUnit = "d" | "mo" | "y";
+export const AGE_UNIT_LABEL: Record<AgeUnit, string> = { d: "days", mo: "months", y: "years" };
+export const yearsOf = (n: number, unit: AgeUnit) => (unit === "d" ? n * DAY : unit === "mo" ? n * MONTH : n);
+/** The unit that shows these ages (in years) as whole numbers: days for the first month, then months under two years. */
+export function ageUnitFor(...years: (number | null)[]): AgeUnit {
+  const set = years.filter((y): y is number => y !== null && y > 0);
+  const whole = (n: number) => Math.abs(n - Math.round(n)) < 0.01;
+  if (set.every((y) => whole(y))) return "y";
+  if (set.every((y) => whole(y / MONTH))) return "mo";
+  return "d";
+}
+/** Days are shown whole (a month boundary is 30.44 days, read as 30); months and years to two decimals. */
+export const inUnit = (years: number, unit: AgeUnit) =>
+  unit === "d" ? Math.round(years / DAY) : Math.round((unit === "mo" ? years / MONTH : years) * 100) / 100;
+
+/** "0–7 days", "1–6 months", "12 years and over"; empty for a range with no age limits. */
+export function ageBandText(r: Pick<RefRange, "ageFrom" | "ageTo">): string {
+  if (r.ageFrom === null && r.ageTo === null) return "";
+  const unit = ageUnitFor(r.ageFrom, r.ageTo);
+  const u = AGE_UNIT_LABEL[unit];
+  if (r.ageTo === null) return `${inUnit(r.ageFrom!, unit)} ${u} and over`;
+  return `${inUnit(r.ageFrom ?? 0, unit)}–${inUnit(r.ageTo, unit)} ${u}`;
+}
+
 const fmt = (n: number, d: number) => n.toFixed(d);
 
 export function rangeText(p: Parameter, r: RefRange | null): string {
@@ -153,7 +189,9 @@ export interface LabResult {
 export function interpret(p: Parameter, value: string, sex: Sex, age: number | null): LabResult | null {
   const v = value.trim();
   const range = pickRange(p.ranges, sex, age);
-  const refText = rangeText(p, range);
+  // A child read against an adult range is marked, so nobody mistakes it for a children's range.
+  const adultForChild = p.kind === "NUMERIC" && !p.refText && range !== null && range.ageFrom === null && range.ageTo === null && age !== null && age < ADULT_AGE;
+  const refText = rangeText(p, range) + (adultForChild ? " (adult range)" : "");
   if (p.kind !== "NUMERIC") {
     const abnormal = p.normal !== "" && v.toLowerCase() !== p.normal.toLowerCase();
     return { paramId: p.id, value: v, flag: abnormal ? "A" : null, refText };
@@ -161,8 +199,10 @@ export function interpret(p: Parameter, value: string, sex: Sex, age: number | n
   if (!NUMERIC_VALUE.test(v)) return null;
   const n = Number(v.replace(/^[<>]\s*/, ""));
   let flag: ResultFlag | null = null;
-  if (p.criticalLow !== null && n < p.criticalLow) flag = "LL";
-  else if (p.criticalHigh !== null && n > p.criticalHigh) flag = "HH";
+  const critLow = range?.criticalLow ?? p.criticalLow;
+  const critHigh = range?.criticalHigh ?? p.criticalHigh;
+  if (critLow !== null && n < critLow) flag = "LL";
+  else if (critHigh !== null && n > critHigh) flag = "HH";
   else if (range?.low != null && n < range.low) flag = "L";
   else if (range?.high != null && n > range.high) flag = "H";
   return { paramId: p.id, value: v, flag, refText };
@@ -178,6 +218,8 @@ export const LabBillInput = z.object({
   testIds: z.array(z.uuid()).min(1, "Add at least one test").max(40),
   discount: Paise.default(0),
   paymentMode: PaymentMode,
+  /** Charge to this in-patient's bill instead of taking payment now (paymentMode is then ignored). */
+  admissionId: z.uuid().optional(),
   idempotencyKey: z.uuid(),
 });
 export type LabBillInput = z.input<typeof LabBillInput>;
@@ -268,7 +310,10 @@ export interface LabOrderDetail extends Omit<LabOrderSummary, "tests"> {
   appointmentId: string | null;
   subtotal: Paise;
   discount: Paise;
-  paymentMode: PaymentMode;
+  /** "IPD": charged to the in-patient bill, settled at discharge. */
+  paymentMode: CounterMode;
+  admissionId: string | null;
+  admissionNo: string | null;
   billedBy: string;
   tests: OrderTest[];
   samples: LabSample[];

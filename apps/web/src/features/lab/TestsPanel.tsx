@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Baby, Plus, Sparkles, Trash2 } from "lucide-react";
 import {
-  LAB_SECTION_LABEL, LabSection, ParamKind, RangeSex, SAMPLE_LABEL, SampleType, formatINR, pickRange, rangeText,
+  AGE_UNIT_LABEL, LAB_SECTION_LABEL, LabSection, ParamKind, RangeSex, SAMPLE_LABEL, SampleType, ageUnitFor, formatINR, inUnit, pickRange, rangeText, yearsOf,
+  type AgeUnit,
   type LabTest, type Parameter, type ParameterInput, type TestInput,
 } from "@ojas/shared";
 import { api, ApiError } from "../../lib/api";
@@ -17,6 +18,7 @@ export function TestsPanel() {
   const [editing, setEditing] = useState<LabTest | "new" | null>(null);
   const tests = useQuery({ queryKey: ["lab-tests", "list", q], queryFn: () => api.labTests(q, { all: true }) });
   const starter = useMutation({ mutationFn: api.addStarterTests, onSuccess: () => qc.invalidateQueries({ queryKey: ["lab-tests"] }) });
+  const kids = useMutation({ mutationFn: api.addChildRanges, onSuccess: () => qc.invalidateQueries({ queryKey: ["lab-tests"] }) });
   const canEdit = can("lab.tests");
   const unpriced = (tests.data ?? []).filter((t) => t.active && t.price <= 0).length;
 
@@ -27,6 +29,7 @@ export function TestsPanel() {
       <div className="flex flex-wrap items-end gap-3 border-b border-line p-4">
         <Field label="Search" className="min-w-48 flex-1" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Code or name" />
         {canEdit && <Button onClick={() => starter.mutate()} disabled={starter.isPending}><Sparkles aria-hidden className="size-4" /> Add common tests</Button>}
+        {canEdit && !!tests.data?.length && <Button onClick={() => kids.mutate()} disabled={kids.isPending}><Baby aria-hidden className="size-4" /> Add children's ranges</Button>}
         {canEdit && <Button variant="primary" onClick={() => setEditing("new")}><Plus aria-hidden className="size-4" /> New test</Button>}
       </div>
       {starter.data && (
@@ -36,6 +39,16 @@ export function TestsPanel() {
           </Alert>
         </div>
       )}
+      {kids.data && (
+        <div className="p-4 pb-0">
+          <Alert tone={kids.data.parameters ? "ok" : "warn"}>
+            {kids.data.parameters
+              ? `Added children's ranges to ${kids.data.parameters} value${kids.data.parameters === 1 ? "" : "s"} in ${kids.data.tests} test${kids.data.tests === 1 ? "" : "s"}. Check them with your pathologist before issuing children's reports.`
+              : "Nothing to add: the common tests already have age ranges (yours are never overwritten)."}
+          </Alert>
+        </div>
+      )}
+      {kids.error && <div className="p-4 pb-0"><Alert tone="danger">{kids.error.message}</Alert></div>}
       {unpriced > 0 && <div className="p-4 pb-0"><Alert tone="warn">{unpriced} test{unpriced === 1 ? " has" : "s have"} no price yet and can't be billed.</Alert></div>}
       {tests.data?.length === 0 && <p className="p-4 text-sm text-ink-3">{q ? "No match." : "No tests yet. Add the common ones with one click, then set your prices."}</p>}
       {!!tests.data?.length && (
@@ -77,7 +90,26 @@ const slug = (name: string, taken: string[]) => {
   return id;
 };
 
-interface RangeDraft { sex: RangeSex; ageFrom: string; ageTo: string; low: string; high: string }
+/** Ages as typed, in the range's own unit (days for newborns, months for infants, otherwise years). */
+interface RangeDraft {
+  sex: RangeSex; ageFrom: string; ageTo: string; unit: AgeUnit; low: string; high: string; criticalLow: string; criticalHigh: string;
+  /** The stored ages, kept when the shown (rounded) age isn't edited, so bands still meet exactly. */
+  saved: { ageFrom: number | null; ageTo: number | null };
+}
+const blankRange = (): RangeDraft => ({ sex: "ANY", ageFrom: "", ageTo: "", unit: "y", low: "", high: "", criticalLow: "", criticalHigh: "", saved: { ageFrom: null, ageTo: null } });
+const toRangeDraft = (r: Parameter["ranges"][number]): RangeDraft => {
+  const unit = ageUnitFor(r.ageFrom, r.ageTo);
+  return {
+    sex: r.sex, unit, ageFrom: r.ageFrom == null ? "" : String(inUnit(r.ageFrom, unit)), ageTo: r.ageTo == null ? "" : String(inUnit(r.ageTo, unit)),
+    low: str(r.low), high: str(r.high), criticalLow: str(r.criticalLow), criticalHigh: str(r.criticalHigh),
+    saved: { ageFrom: r.ageFrom, ageTo: r.ageTo },
+  };
+};
+const ageOrNull = (s: string, unit: AgeUnit, saved: number | null) => {
+  if (s.trim() === "") return null;
+  if (saved !== null && Number(s) === inUnit(saved, unit)) return saved;
+  return yearsOf(Number(s), unit);
+};
 interface ParamDraft {
   id: string; isNew: boolean; name: string; unit: string; kind: ParamKind; decimals: string; group: string; ranges: RangeDraft[];
   criticalLow: string; criticalHigh: string; choices: string; normal: string; refText: string;
@@ -85,11 +117,11 @@ interface ParamDraft {
 
 const toDraft = (p: Parameter): ParamDraft => ({
   id: p.id, isNew: false, name: p.name, unit: p.unit, kind: p.kind, decimals: String(p.decimals), group: p.group,
-  ranges: p.ranges.map((r) => ({ sex: r.sex, ageFrom: str(r.ageFrom), ageTo: str(r.ageTo), low: str(r.low), high: str(r.high) })),
+  ranges: p.ranges.map(toRangeDraft),
   criticalLow: str(p.criticalLow), criticalHigh: str(p.criticalHigh), choices: p.choices.join(", "), normal: p.normal, refText: p.refText,
 });
 const blankParam = (): ParamDraft => ({
-  id: "", isNew: true, name: "", unit: "", kind: "NUMERIC", decimals: "1", group: "", ranges: [{ sex: "ANY", ageFrom: "", ageTo: "", low: "", high: "" }],
+  id: "", isNew: true, name: "", unit: "", kind: "NUMERIC", decimals: "1", group: "", ranges: [blankRange()],
   criticalLow: "", criticalHigh: "", choices: "", normal: "", refText: "",
 });
 
@@ -97,7 +129,10 @@ function fromDraft(p: ParamDraft): ParameterInput {
   return {
     id: p.id, name: p.name, unit: p.unit, kind: p.kind, decimals: Number(p.decimals) || 0, group: p.group,
     ranges: p.kind === "NUMERIC"
-      ? p.ranges.filter((r) => r.low.trim() || r.high.trim()).map((r) => ({ sex: r.sex, ageFrom: numOrNull(r.ageFrom), ageTo: numOrNull(r.ageTo), low: numOrNull(r.low), high: numOrNull(r.high) }))
+      ? p.ranges.filter((r) => r.low.trim() || r.high.trim()).map((r) => ({
+        sex: r.sex, ageFrom: ageOrNull(r.ageFrom, r.unit, r.saved.ageFrom), ageTo: ageOrNull(r.ageTo, r.unit, r.saved.ageTo), low: numOrNull(r.low), high: numOrNull(r.high),
+        criticalLow: numOrNull(r.criticalLow), criticalHigh: numOrNull(r.criticalHigh),
+      }))
       : [],
     criticalLow: p.kind === "NUMERIC" ? numOrNull(p.criticalLow) : null,
     criticalHigh: p.kind === "NUMERIC" ? numOrNull(p.criticalHigh) : null,
@@ -209,36 +244,43 @@ function TestForm({ test, onDone }: { test?: LabTest; onDone: () => void }) {
 
 function Ranges({ p, onChange }: { p: ParamDraft; onChange: (patch: Partial<ParamDraft>) => void }) {
   const setR = (i: number, patch: Partial<RangeDraft>) => onChange({ ranges: p.ranges.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
-  // What a 35-year-old man and woman would see, as a check on what's been typed.
-  const sample = (sex: "M" | "F") => {
+  // What an adult man and woman, and a 4-year-old, would see, as a check on what's been typed.
+  const sample = (sex: "M" | "F", age = 35) => {
     try {
       const param = fromDraft({ ...p, id: "x" }) as Parameter;
-      return rangeText({ ...param, refText: "" }, pickRange(param.ranges, sex, 35)) || "none";
+      const range = pickRange(param.ranges, sex, age);
+      const adult = age < 18 && range && range.ageFrom === null && range.ageTo === null;
+      return (rangeText({ ...param, refText: "" }, range) || "none") + (adult ? " (adult range)" : "");
     } catch {
       return "—";
     }
   };
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-sm font-medium text-ink-2">Reference ranges <span className="font-normal text-ink-3">(the closest match for the patient's age and sex is used; leave low or high blank for "up to" / "above")</span></div>
+      <div className="text-sm font-medium text-ink-2">Reference ranges <span className="font-normal text-ink-3">(the closest match for the patient's age and sex is used; leave low or high blank for "up to" / "above"; leave ages blank for adults)</span></div>
       {p.ranges.map((r, i) => (
-        <div key={i} className="grid items-end gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-[8rem_6rem_6rem_1fr_1fr_auto]">
+        <div key={i} className="grid items-end gap-2 grid-cols-2 sm:grid-cols-4 lg:grid-cols-[8rem_5rem_5rem_7rem_1fr_1fr_5.5rem_5.5rem_auto]">
           <Select label="For" value={r.sex} onChange={(e) => setR(i, { sex: RangeSex.parse(e.target.value) })}>
             <option value="ANY">Everyone</option><option value="M">Men / boys</option><option value="F">Women / girls</option>
           </Select>
           <Field label="Age from" inputMode="decimal" value={r.ageFrom} onChange={(e) => setR(i, { ageFrom: e.target.value })} placeholder="any" />
           <Field label="to (under)" inputMode="decimal" value={r.ageTo} onChange={(e) => setR(i, { ageTo: e.target.value })} placeholder="any" />
+          <Select label="Age in" value={r.unit} onChange={(e) => setR(i, { unit: e.target.value as AgeUnit })}>
+            {(Object.keys(AGE_UNIT_LABEL) as AgeUnit[]).map((u) => <option key={u} value={u}>{AGE_UNIT_LABEL[u]}</option>)}
+          </Select>
           <Field label="Low" inputMode="decimal" value={r.low} onChange={(e) => setR(i, { low: e.target.value })} />
           <Field label="High" inputMode="decimal" value={r.high} onChange={(e) => setR(i, { high: e.target.value })} />
+          <Field label="Critical <" inputMode="decimal" value={r.criticalLow} onChange={(e) => setR(i, { criticalLow: e.target.value })} placeholder="usual" />
+          <Field label="Critical >" inputMode="decimal" value={r.criticalHigh} onChange={(e) => setR(i, { criticalHigh: e.target.value })} placeholder="usual" />
           <Button variant="ghost" className="min-h-10 px-2" aria-label="Remove range" onClick={() => onChange({ ranges: p.ranges.filter((_, j) => j !== i) })}><Trash2 aria-hidden className="size-4" /></Button>
         </div>
       ))}
       <div className="grid items-end gap-2 sm:grid-cols-[auto_1fr_1fr]">
-        <Button variant="ghost" onClick={() => onChange({ ranges: [...p.ranges, { sex: "ANY", ageFrom: "", ageTo: "", low: "", high: "" }] })}><Plus aria-hidden className="size-4" /> Add range</Button>
-        <Field label="Critical below" inputMode="decimal" value={p.criticalLow} onChange={(e) => onChange({ criticalLow: e.target.value })} />
-        <Field label="Critical above" inputMode="decimal" value={p.criticalHigh} onChange={(e) => onChange({ criticalHigh: e.target.value })} />
+        <Button variant="ghost" onClick={() => onChange({ ranges: [...p.ranges, blankRange()] })}><Plus aria-hidden className="size-4" /> Add range</Button>
+        <Field label="Usually critical below" inputMode="decimal" value={p.criticalLow} onChange={(e) => onChange({ criticalLow: e.target.value })} />
+        <Field label="Usually critical above" inputMode="decimal" value={p.criticalHigh} onChange={(e) => onChange({ criticalHigh: e.target.value })} />
       </div>
-      <p className="text-xs text-ink-3">An adult man would see: {sample("M")} · an adult woman: {sample("F")}</p>
+      <p className="text-xs text-ink-3">An adult man would see: {sample("M")} · an adult woman: {sample("F")} · a 4-year-old: {sample("M", 4)}</p>
     </div>
   );
 }

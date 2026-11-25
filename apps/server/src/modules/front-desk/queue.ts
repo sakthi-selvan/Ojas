@@ -5,10 +5,11 @@ import { AppError } from "../../core/errors.js";
 
 export async function queueFor(db: Queryable, date: string, practitionerId?: string): Promise<QueueItem[]> {
   const { rows } = await db.query<{
-    id: string; token: number; slot_start: string; status: QueueItem["status"]; patient_name: string; uhid: string; practitioner_id: string; practitioner_name: string; has_vitals: boolean;
+    id: string; token: number; slot_start: string; status: QueueItem["status"]; patient_name: string; uhid: string; practitioner_id: string; practitioner_name: string; has_vitals: boolean; invoice_id: string | null;
   }>(
     `select a.id, a.token, a.slot_start, a.status, p.name as patient_name, p.uhid, d.id as practitioner_id, d.name as practitioner_name,
-            coalesce(e.vitals_at is not null, false) as has_vitals
+            coalesce(e.vitals_at is not null, false) as has_vitals,
+            (select i.id from core.invoice i where i.appointment_id = a.id order by i.issued_at limit 1) as invoice_id
        from core.appointment a
        join core.patient p on p.id = a.patient_id
        join core.practitioner d on d.id = a.practitioner_id
@@ -19,7 +20,7 @@ export async function queueFor(db: Queryable, date: string, practitionerId?: str
   );
   return rows.map((r) => ({
     appointmentId: r.id, token: r.token, slotStart: r.slot_start, status: r.status, patientName: r.patient_name,
-    uhid: r.uhid, practitionerId: r.practitioner_id, practitionerName: r.practitioner_name, vitalsRecorded: r.has_vitals,
+    uhid: r.uhid, practitionerId: r.practitioner_id, practitionerName: r.practitioner_name, vitalsRecorded: r.has_vitals, invoiceId: r.invoice_id,
   }));
 }
 

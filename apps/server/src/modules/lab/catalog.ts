@@ -87,6 +87,37 @@ export async function updateTest(db: Db, actor: Actor, id: string, raw: unknown)
   }
 }
 
+/**
+ * For labs that loaded the starter tests before children's ranges existed: adds the starter's
+ * children's ranges to each matching parameter (same test code and parameter) that has no age
+ * ranges of its own yet. Ranges the lab has written are never touched.
+ */
+export async function addChildRanges(db: Db, actor: Actor): Promise<{ tests: number; parameters: number }> {
+  return db.tx(async (q) => {
+    const rows = (await q.query<{ id: string; code: string; parameters: Parameter[] }>("select id, code, parameters from lab.test for update")).rows;
+    let tests = 0, parameters = 0;
+    for (const row of rows) {
+      const starter = STARTER_TESTS.find((t) => t.code === row.code);
+      if (!starter) continue;
+      const kids = new Map(TestInput.parse(starter).parameters.map((p) => [p.id, p.ranges.filter((x) => x.ageFrom !== null || x.ageTo !== null)]));
+      let changed = 0;
+      const next = row.parameters.map((p) => {
+        const add = kids.get(p.id) ?? [];
+        if (p.kind !== "NUMERIC" || !add.length || p.ranges.some((x) => x.ageFrom !== null || x.ageTo !== null)) return p;
+        if (p.ranges.length + add.length > 24) return p;
+        changed++;
+        return { ...p, ranges: [...p.ranges, ...add] };
+      });
+      if (!changed) continue;
+      await q.query("update lab.test set parameters = $2::jsonb, updated_at = now(), updated_by = $3, row_version = row_version + 1 where id = $1", [row.id, JSON.stringify(next), actor.user]);
+      tests++;
+      parameters += changed;
+    }
+    await audit(q, actor, "lab.test.child_ranges", "lab_test", "starter", { tests, parameters });
+    return { tests, parameters };
+  });
+}
+
 /** Adds the starter catalogue, skipping any code the lab already has. Returns how many were added. */
 export async function addStarterTests(db: Db, actor: Actor): Promise<{ added: number; skipped: number }> {
   return db.tx(async (q) => {

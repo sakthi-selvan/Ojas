@@ -1,4 +1,4 @@
-import { CheckoutInput, type InvoiceLine, type Receipt } from "@ojas/shared";
+import { CancelBillInput, CheckoutInput, type InvoiceLine, type Receipt } from "@ojas/shared";
 import type { Db, Queryable } from "../../db/index.js";
 import { audit, type Actor } from "../../core/audit.js";
 import { AppError, isUniqueViolation } from "../../core/errors.js";
@@ -90,6 +90,7 @@ export async function checkout(db: Db, actor: Actor, input: unknown, now = new D
         practitioner: { name: doctor.name, department: doctor.department },
         lines, subtotal, discount, total, paymentMode: v.paymentMode,
         facility: await facility(q),
+        cancelled: null,
       };
       await q.query("insert into core.idempotency (key, response) values ($1, $2::jsonb)", [v.idempotencyKey, JSON.stringify(receipt)]);
       return receipt;
@@ -119,14 +120,18 @@ export async function getReceipt(db: Queryable, invoiceId: string): Promise<Rece
     invoice_no: string; issued_at: string; subtotal: number; discount: number; total: number; appointment_id: string; token: number; slot_start: string;
     uhid: string; p_name: string; sex: Receipt["patient"]["sex"]; phone: string; dob: string | null; dob_estimated: boolean;
     d_name: string; department: string; mode: Receipt["paymentMode"];
+    cancelled_at: string | null; cancelled_by: string | null; cancel_reason: string; refund_mode: Receipt["paymentMode"] | null; refunded: number | null;
   }>(
     `select i.invoice_no, i.issued_at, i.subtotal, i.discount, i.total, a.id as appointment_id, a.token, a.slot_start,
             p.uhid, p.name as p_name, p.sex, p.phone, p.dob, p.dob_estimated, d.name as d_name, d.department,
-            (select mode from core.payment where invoice_id = i.id order by received_at limit 1) as mode
+            (select mode from core.payment where invoice_id = i.id and kind = 'PAYMENT' order by received_at limit 1) as mode,
+            i.cancelled_at, coalesce((select u.display_name from core.app_user u where u.username = i.cancelled_by), i.cancelled_by) as cancelled_by, i.cancel_reason,
+            rf.mode as refund_mode, rf.amount as refunded
        from core.invoice i
        join core.appointment a on a.id = i.appointment_id
        join core.patient p on p.id = i.patient_id
        join core.practitioner d on d.id = a.practitioner_id
+       left join core.payment rf on rf.invoice_id = i.id and rf.kind = 'REFUND'
       where i.id = $1`,
     [invoiceId],
   );
@@ -143,5 +148,43 @@ export async function getReceipt(db: Queryable, invoiceId: string): Promise<Rece
     lines: lines.rows.map((l) => ({ description: l.description, quantity: l.quantity, unitPrice: l.unit_price, amount: l.amount })),
     subtotal: r.subtotal, discount: r.discount, total: r.total, paymentMode: r.mode,
     facility: await facility(db),
+    cancelled: r.cancelled_at
+      ? { at: r.cancelled_at, by: r.cancelled_by ?? "", reason: r.cancel_reason, refundMode: r.refund_mode ?? r.mode, refunded: r.refunded ?? 0 }
+      : null,
   };
+}
+
+/**
+ * Cancels a paid OPD bill before the doctor has seen the patient: the appointment is cancelled
+ * (freeing the slot) and the whole amount is refunded as a separate payment, so the day's cash
+ * still adds up. The bill itself is never changed or deleted.
+ */
+export async function cancelBill(db: Db, actor: Actor, invoiceId: string, raw: unknown, now = new Date()): Promise<{ receipt: Receipt; visitDate: string }> {
+  const v = CancelBillInput.parse(raw);
+  return db.tx(async (q) => {
+    const inv = (await q.query<{ invoice_no: string; status: string; total: number; appointment_id: string | null; a_status: string | null; visit_date: string | null }>(
+      `select i.invoice_no, i.status, i.total, i.appointment_id, a.status as a_status, to_char(a.visit_date, 'YYYY-MM-DD') as visit_date
+         from core.invoice i left join core.appointment a on a.id = i.appointment_id where i.id = $1 for update of i`, [invoiceId],
+    )).rows[0];
+    if (!inv) throw new AppError(404, "invoice_not_found", "Bill not found");
+    if (inv.status === "CANCELLED") throw new AppError(409, "already_cancelled", `${inv.invoice_no} is already cancelled`);
+    if (inv.a_status === "IN_CONSULT" || inv.a_status === "DONE") {
+      throw new AppError(409, "consult_started", "The doctor has already seen this patient, so the bill can't be cancelled here. Ask an administrator.");
+    }
+    await q.query(
+      "update core.invoice set status = 'CANCELLED', cancelled_at = $2, cancelled_by = $3, cancel_reason = $4, updated_by = $3, updated_at = now() where id = $1",
+      [invoiceId, now.toISOString(), actor.user, v.reason],
+    );
+    if (inv.total > 0) {
+      await q.query(
+        "insert into core.payment (id, invoice_id, kind, mode, amount, received_at, received_by) values ($1,$2,'REFUND',$3,$4,$5,$6)",
+        [uuidv7(), invoiceId, v.refundMode, inv.total, now.toISOString(), actor.user],
+      );
+    }
+    if (inv.appointment_id && inv.a_status !== "CANCELLED") {
+      await q.query("update core.appointment set status = 'CANCELLED', updated_by = $2, updated_at = now() where id = $1", [inv.appointment_id, actor.user]);
+    }
+    await audit(q, actor, "billing.cancel", "invoice", invoiceId, { invoiceNo: inv.invoice_no, refunded: inv.total, mode: v.refundMode, reason: v.reason });
+    return { receipt: await getReceipt(q, invoiceId), visitDate: inv.visit_date ?? localDate(now) };
+  });
 }

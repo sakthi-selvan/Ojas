@@ -2,10 +2,12 @@ import { useMemo } from "react";
 import type { QueueItem } from "@ojas/shared";
 import { Badge, Card } from "../../components/ui";
 import { QueueRow, useQueue } from "./QueuePanel";
+import { useRefundVoucher } from "../front-desk/CancelBill";
 
 /** Full-screen OPD queue: one column per doctor. Also suitable for a nurse station screen. */
 export function QueueBoard() {
   const queue = useQueue();
+  const voucher = useRefundVoucher();
   const columns = useMemo(() => {
     const m = new Map<string, { name: string; items: QueueItem[] }>();
     for (const i of queue.data ?? []) {
@@ -19,6 +21,7 @@ export function QueueBoard() {
   return (
     <div className="mx-auto max-w-[1600px] p-4 lg:p-6">
       <h1 className="mb-4 text-xl font-bold">OPD queue: today</h1>
+      {voucher.view}
       {columns.length === 0 && !queue.isLoading && <p className="text-ink-3">No appointments yet today. Bookings from the front desk appear here instantly.</p>}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {columns.map(([id, col]) => {
@@ -32,7 +35,7 @@ export function QueueBoard() {
                 {current && <Badge tone="accent">Now: #{current.token}</Badge>}
               </div>
               <ol className="p-2">
-                {col.items.map((i) => <QueueRow key={i.appointmentId} item={i} />)}
+                {col.items.map((i) => <QueueRow key={i.appointmentId} item={i} onRefunded={voucher.print} />)}
               </ol>
             </Card>
           );

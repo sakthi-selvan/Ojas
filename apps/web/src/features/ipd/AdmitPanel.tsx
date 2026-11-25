@@ -102,7 +102,7 @@ export function AdmitPanel({ initialBedId, onOpen }: { initialBedId: string | nu
   );
 }
 
-function Admitted({ admission: a, onOpen }: { admission: Admission; onOpen: () => void }) {
+export function Admitted({ admission: a, onOpen }: { admission: Admission; onOpen: () => void }) {
   const { print, view } = useIpdPrint();
   const deposit = a.payments.find((p) => p.kind === "DEPOSIT");
   useHotkeys({ Enter: onOpen, ...(deposit ? { P: () => print({ kind: "receipt", admission: a, payment: deposit }) } : {}) });
@@ -111,7 +111,7 @@ function Admitted({ admission: a, onOpen }: { admission: Admission; onOpen: () =
       <div role="status" className="flex items-center gap-4 rounded-xl bg-ok-soft p-4 text-ok">
         <CheckCircle2 aria-hidden className="size-8 shrink-0" />
         <div className="flex-1">
-          <div className="font-semibold">Admitted · {a.admissionNo}</div>
+          <div className="font-semibold">Admitted · {a.admissionNo}{a.emergency ? " · emergency" : ""}{a.mlc ? " · MLC" : ""}</div>
           <div className="text-sm">{a.patient.name} · {a.bed?.wardName}, bed {a.bed?.label} · {a.doctor.name}{deposit ? ` · advance ${formatINR(deposit.amount)} (${deposit.receiptNo})` : ""}</div>
         </div>
       </div>

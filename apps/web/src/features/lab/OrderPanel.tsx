@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Banknote, CheckCircle2, ClipboardList, CreditCard, Printer, Smartphone, TestTubes, Trash2, X } from "lucide-react";
-import { SAMPLE_LABEL, ageLabel, formatINR, type LabOrderDetail, type LabPatient, type LabRequest, type LabTest, type PaymentMode } from "@ojas/shared";
+import { Banknote, BedDouble, CheckCircle2, ClipboardList, CreditCard, Printer, Smartphone, TestTubes, Trash2, X } from "lucide-react";
+import { SAMPLE_LABEL, ageLabel, formatINR, type LabOrderDetail, type LabPatient, type LabRequest, type LabTest, type CounterMode } from "@ojas/shared";
 import { api, ApiError, timeLabel } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useHotkeys } from "../../lib/hotkeys";
@@ -22,13 +22,23 @@ export function OrderPanel({ onOpenOrder }: { onOpenOrder: (id: string) => void 
   const [referredBy, setReferredBy] = useState("");
   const [tests, setTests] = useState<LabTest[]>([]);
   const [unmatched, setUnmatched] = useState<string[]>([]);
-  const [mode, setMode] = useState<PaymentMode>("CASH");
+  const [mode, setMode] = useState<CounterMode>("CASH");
   const [discountText, setDiscountText] = useState("");
   const [done, setDone] = useState<LabOrderDetail | null>(null);
   const [errs, setErrs] = useState<Record<string, string>>({});
   const search = useRef<HTMLInputElement>(null);
   const idemKey = useRef(crypto.randomUUID());
   const requests = useQuery({ queryKey: ["lab-requests"], queryFn: api.labRequests, refetchInterval: 30_000 });
+  const inpatients = useQuery({ queryKey: ["ipd-inpatients"], queryFn: api.inpatients });
+  /** An admitted patient's tests can go on their in-patient bill instead of being paid now. */
+  const ip = patient ? inpatients.data?.find((i) => i.patient.id === patient.id) : undefined;
+  const payMode: CounterMode = mode === "IPD" && !ip ? "CASH" : mode;
+  const choose = (p: LabPatient) => {
+    setPatient(p);
+    const admitted = inpatients.data?.find((i) => i.patient.id === p.id);
+    setMode(admitted ? "IPD" : "CASH");
+    if (admitted) setReferredBy((r) => r || admitted.doctorName);
+  };
 
   const canDiscount = can("billing.discount");
   const subtotal = tests.reduce((s, t) => s + t.price, 0);
@@ -36,7 +46,7 @@ export function OrderPanel({ onOpenOrder }: { onOpenOrder: (id: string) => void 
   const unpriced = tests.filter((t) => t.price <= 0);
 
   const load = (r: LabRequest) => {
-    setPatient(r.patient);
+    choose(r.patient);
     setAppointmentId(r.appointmentId);
     setReferredBy(r.prescriber);
     setTests(r.lines.flatMap((l) => (l.match && l.match.active ? [l.match] : [])).filter((t, i, a) => a.findIndex((x) => x.id === t.id) === i));
@@ -57,7 +67,7 @@ export function OrderPanel({ onOpenOrder }: { onOpenOrder: (id: string) => void 
 
   const bill = useMutation({
     mutationFn: () =>
-      api.billLab({ patientId: patient!.id, appointmentId, referredBy, testIds: tests.map((t) => t.id), discount, paymentMode: mode, idempotencyKey: idemKey.current }),
+      api.billLab({ patientId: patient!.id, appointmentId, referredBy, testIds: tests.map((t) => t.id), discount, paymentMode: payMode === "IPD" ? "CASH" : payMode, admissionId: payMode === "IPD" ? ip?.admissionId : undefined, idempotencyKey: idemKey.current }),
     onSuccess: (o) => {
       setDone(o);
       void qc.invalidateQueries({ queryKey: ["lab-requests"] });
@@ -77,7 +87,7 @@ export function OrderPanel({ onOpenOrder }: { onOpenOrder: (id: string) => void 
     <div className="grid items-start gap-4 lg:grid-cols-[1fr_22rem]">
       <Card className="flex flex-col gap-4 p-4 sm:p-6">
         {!patient ? (
-          <PatientStep onSelect={(p) => setPatient({ id: p.id, uhid: p.uhid, name: p.name, sex: p.sex, dob: p.dob, phone: p.phone })} />
+          <PatientStep onSelect={(p) => choose({ id: p.id, uhid: p.uhid, name: p.name, sex: p.sex, dob: p.dob, phone: p.phone })} />
         ) : (
           <>
             <div className="flex items-center gap-3 rounded-lg bg-surface-2 p-3">
@@ -109,9 +119,10 @@ export function OrderPanel({ onOpenOrder }: { onOpenOrder: (id: string) => void 
               <Segmented
                 label="Payment"
                 name="lab-mode"
-                value={mode}
+                value={payMode}
                 onChange={setMode}
                 options={[
+                  ...(ip ? [{ value: "IPD" as const, label: "IP bill", icon: <BedDouble aria-hidden className="size-4" /> }] : []),
                   { value: "CASH", label: "Cash", icon: <Banknote aria-hidden className="size-4" /> },
                   { value: "UPI", label: "UPI", icon: <Smartphone aria-hidden className="size-4" /> },
                   { value: "CARD", label: "Card", icon: <CreditCard aria-hidden className="size-4" /> },
@@ -123,10 +134,10 @@ export function OrderPanel({ onOpenOrder }: { onOpenOrder: (id: string) => void 
             {bill.error && !errs.discount && <Alert tone="danger">{bill.error.message}</Alert>}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
               <div>
-                <div className="text-sm text-ink-3">To pay</div>
+                <div className="text-sm text-ink-3">{payMode === "IPD" ? `Add to IP bill ${ip?.admissionNo} (${ip?.wardName}, bed ${ip?.bedLabel})` : "To pay"}</div>
                 <div className="text-3xl font-bold tabular-nums">{formatINR(Math.max(0, subtotal - discount))}</div>
               </div>
-              <Button variant="primary" size="lg" shortcut="F9" disabled={!tests.length || unpriced.length > 0 || bill.isPending} onClick={submit}>Bill & take payment</Button>
+              <Button variant="primary" size="lg" shortcut="F9" disabled={!tests.length || unpriced.length > 0 || bill.isPending} onClick={submit}>{payMode === "IPD" ? "Add to IP bill" : "Bill & take payment"}</Button>
             </div>
           </>
         )}
@@ -172,7 +183,7 @@ function Billed({ order, onNext, onOpen }: { order: LabOrderDetail; onNext: () =
       <div role="status" className="flex items-center gap-4 rounded-xl bg-ok-soft p-4 text-ok">
         <CheckCircle2 aria-hidden className="size-8 shrink-0" />
         <div className="flex-1">
-          <div className="font-semibold">Paid {formatINR(order.total)} · {order.orderNo}</div>
+          <div className="font-semibold">{order.paymentMode === "IPD" ? `${formatINR(order.total)} added to IP bill ${order.admissionNo}` : `Paid ${formatINR(order.total)}`} · {order.orderNo}</div>
           <div className="text-sm">{order.patient.name} · {order.tests.map((t) => t.code).join(", ")}</div>
         </div>
       </div>

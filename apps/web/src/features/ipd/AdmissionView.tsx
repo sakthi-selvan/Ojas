@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRightLeft, ClipboardList, FileText, Pill, Printer, Receipt } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, ClipboardList, FileText, Pill, Printer, Receipt, ShieldAlert, UserPen } from "lucide-react";
 import { formatINR, type Admission } from "@ojas/shared";
 import { api, ApiError, dateTimeLabel } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
@@ -13,6 +13,7 @@ import { MedsTab } from "./MedsTab";
 import { BillTab } from "./BillTab";
 import { DischargeTab } from "./DischargeTab";
 import { useIpdPrint } from "./printables";
+import { CompleteRegistration, MlcEditor } from "./EmergencyDetails";
 
 type Tab = "chart" | "meds" | "bill" | "discharge";
 
@@ -21,7 +22,8 @@ export function AdmissionView({ id, onClose }: { id: string; onClose: () => void
   const { can } = useAuth();
   const q = useQuery({ queryKey: ["ipd-admission", id], queryFn: () => api.admission(id), refetchInterval: 60_000 });
   const [tab, setTab] = useState<Tab>(() => (can("ipd.chart") || can("ipd.orders") ? "chart" : "bill"));
-  const [moving, setMoving] = useState(false);
+  const [editing, setEditing] = useState<"move" | "patient" | "mlc" | null>(null);
+  const moving = editing === "move";
   const { print, view } = useIpdPrint();
   useHotkeys({ Escape: !moving && onClose });
   const a = q.data;
@@ -31,7 +33,7 @@ export function AdmissionView({ id, onClose }: { id: string; onClose: () => void
   const tabs: { id: Tab; label: string; icon: typeof Pill; badge?: string }[] = [
     { id: "chart", label: "Chart", icon: ClipboardList },
     { id: "meds", label: "Medicines", icon: Pill, badge: String(a.meds.filter((m) => !m.stoppedAt).length || "") },
-    { id: "bill", label: "Bill", icon: Receipt, badge: open ? formatINR(a.bill.subtotal) : undefined },
+    { id: "bill", label: "Bill", icon: Receipt, badge: open ? formatINR(a.bill.total) : undefined },
     { id: "discharge", label: open ? "Discharge" : "Summary", icon: FileText, badge: a.summarySignedAt && open ? "Signed" : undefined },
   ];
   return (
@@ -44,22 +46,44 @@ export function AdmissionView({ id, onClose }: { id: string; onClose: () => void
               {a.patient.name}
               <span className="text-base font-normal text-ink-3">{a.patient.uhid} · {a.admissionNo}</span>
               {open ? (a.summarySignedAt ? <Badge tone="ok">Discharge advised</Badge> : <Badge tone="accent">Day {dayOfStay(a.admittedAt)}</Badge>) : <Badge>Discharged</Badge>}
+              {a.emergency && <Badge tone="danger">Emergency</Badge>}
+              {a.mlc && <Badge tone="danger">MLC</Badge>}
             </h1>
             <p className="text-sm text-ink-2">
-              {ageSex(a.patient)} · {a.patient.phone} · {a.bed ? `${a.bed.wardName}, bed ${a.bed.label}` : a.stays.at(-1) ? `was in ${a.stays.at(-1)!.wardName}, bed ${a.stays.at(-1)!.bedLabel}` : ""} · {a.doctor.name}
+              {ageSex(a.patient)}{a.patient.phone ? ` · ${a.patient.phone}` : ""} · {a.bed ? `${a.bed.wardName}, bed ${a.bed.label}` : a.stays.at(-1) ? `was in ${a.stays.at(-1)!.wardName}, bed ${a.stays.at(-1)!.bedLabel}` : ""} · {a.doctor.name}
             </p>
             <p className="text-sm text-ink-3">
               Admitted {dateTimeLabel(a.admittedAt)} by {a.admittedBy}{a.dischargedAt ? ` · discharged ${dateTimeLabel(a.dischargedAt)}` : ""} · {a.reason}
               {a.attendant.name && ` · Attendant: ${a.attendant.name}${a.attendant.relation ? ` (${a.attendant.relation})` : ""}${a.attendant.phone ? `, ${a.attendant.phone}` : ""}`}
             </p>
+            {a.mlc && (
+              <p className="text-sm text-danger">
+                Medico-legal case · {a.mlc.no ? `No. ${a.mlc.no}` : "number not recorded yet"}
+                {a.mlc.policeStation && ` · informed ${a.mlc.policeStation} police station`}{a.mlc.broughtBy && ` · brought by ${a.mlc.broughtBy}`}
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
-            {open && can("ipd.admit") && <Button onClick={() => setMoving((m) => !m)} aria-expanded={moving}><ArrowRightLeft aria-hidden className="size-4" /> Move bed</Button>}
+            {open && can("ipd.admit") && <Button onClick={() => setEditing((m) => (m === "move" ? null : "move"))} aria-expanded={moving}><ArrowRightLeft aria-hidden className="size-4" /> Move bed</Button>}
+            {(can("ipd.admit") || can("ipd.orders")) && (
+              <Button onClick={() => setEditing((m) => (m === "mlc" ? null : "mlc"))} aria-expanded={editing === "mlc"}>
+                <ShieldAlert aria-hidden className="size-4" /> {a.mlc ? "MLC details" : "Mark as MLC"}
+              </Button>
+            )}
             <Button onClick={() => print({ kind: "bill", admission: a })}><Printer aria-hidden className="size-4" /> {open ? "Interim bill" : "Final bill"}</Button>
             {a.summarySignedAt && <Button onClick={() => print({ kind: "summary", admission: a })}><Printer aria-hidden className="size-4" /> Summary</Button>}
           </div>
         </div>
-        {moving && <MoveBed admission={a} onDone={() => setMoving(false)} />}
+        {a.detailsPending && editing !== "patient" && (
+          <Alert tone="warn" action={(can("ipd.admit") || can("patients.write")) && (
+            <Button onClick={() => setEditing("patient")}><UserPen aria-hidden className="size-4" /> Complete registration</Button>
+          )}>
+            Registered in a hurry at casualty. Still to fill in: {[a.patient.name.startsWith("Unknown ") && "name", !a.patient.phone && "mobile", !a.patient.dob && "age"].filter(Boolean).join(", ") || "check the details"}.
+          </Alert>
+        )}
+        {moving && <MoveBed admission={a} onDone={() => setEditing(null)} />}
+        {editing === "patient" && <CompleteRegistration admission={a} onDone={() => setEditing(null)} />}
+        {editing === "mlc" && <MlcEditor admission={a} onDone={() => setEditing(null)} />}
       </Card>
 
       <div role="tablist" aria-label="Admission" className="flex gap-1 overflow-x-auto overflow-y-hidden border-b border-line [scrollbar-width:none]">
@@ -106,6 +130,7 @@ export function useAdmissionUpdate() {
     qc.setQueryData(["ipd-admission", a.id], a);
     void qc.invalidateQueries({ queryKey: ["ipd-wards"] });
     void qc.invalidateQueries({ queryKey: ["ipd-admissions"] });
+    void qc.invalidateQueries({ queryKey: ["ipd-doses"] });
   };
 }
 

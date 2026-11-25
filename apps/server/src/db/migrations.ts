@@ -714,6 +714,79 @@ export const migrations: { id: number; name: string; sql: string }[] = [
       create index ipd_payment_admission_idx on ipd.payment (admission_id, received_at);
     `,
   },
+  {
+    id: 9,
+    name: "counter_bills_to_inpatients",
+    sql: `
+      -- Pharmacy and lab bills can be put on an in-patient's bill (mode IPD) instead of paid at the counter.
+      alter table pharmacy.sale drop constraint if exists sale_payment_mode_check;
+      alter table pharmacy.sale add constraint sale_payment_mode_check check (payment_mode in ('CASH','UPI','CARD','IPD'));
+      alter table pharmacy.sale add column admission_id uuid references ipd.admission(id);
+      alter table pharmacy.sale add constraint sale_ipd_check check ((payment_mode = 'IPD') = (admission_id is not null));
+      create index sale_admission_idx on pharmacy.sale (admission_id) where admission_id is not null;
+
+      alter table lab.lab_order drop constraint if exists lab_order_payment_mode_check;
+      alter table lab.lab_order add constraint lab_order_payment_mode_check check (payment_mode in ('CASH','UPI','CARD','IPD'));
+      alter table lab.lab_order add column admission_id uuid references ipd.admission(id);
+      alter table lab.lab_order add constraint lab_order_ipd_check check ((payment_mode = 'IPD') = (admission_id is not null));
+      create index lab_order_admission_idx on lab.lab_order (admission_id) where admission_id is not null;
+    `,
+  },
+  {
+    id: 10,
+    name: "corrections",
+    sql: `
+      -- A paid OPD bill can be cancelled; the money going back is a REFUND payment, never an edit.
+      alter table core.invoice add column cancelled_at timestamptz;
+      alter table core.invoice add column cancelled_by text;
+      alter table core.invoice add column cancel_reason text not null default '';
+      alter table core.invoice add constraint invoice_cancel_check check ((status = 'CANCELLED') = (cancelled_at is not null));
+      alter table core.payment add column kind text not null default 'PAYMENT' check (kind in ('PAYMENT','REFUND'));
+      create unique index payment_refund_uq on core.payment (invoice_id) where kind = 'REFUND';
+      create index payment_received_idx on core.payment (received_at);
+      create index ipd_payment_received_idx on ipd.payment (received_at);
+
+      -- Each correction of a signed discharge summary after discharge keeps the version it replaced.
+      create table ipd.summary_amendment (
+        id           uuid primary key,
+        admission_id uuid not null references ipd.admission(id),
+        version      integer not null,
+        previous     jsonb not null,
+        reason       text not null,
+        amended_at   timestamptz not null,
+        amended_by   text not null,
+        unique (admission_id, version)
+      );
+    `,
+  },
+  {
+    id: 11,
+    name: "room_rent_gst",
+    sql: `
+      -- GST on hospital room rent: a non-ICU room above the threshold per day is taxed on its whole rent.
+      -- The hospital sets the rate and threshold; each bed stay keeps the rate that applied when it began.
+      alter table core.facility add column room_gst_bp integer not null default 500 check (room_gst_bp between 0 and 2800);
+      alter table core.facility add column room_gst_above bigint not null default 500000 check (room_gst_above >= 0);
+      alter table ipd.bed_stay add column gst_bp integer not null default 0 check (gst_bp between 0 and 2800);
+    `,
+  },
+  {
+    id: 12,
+    name: "emergency_admission",
+    sql: `
+      -- Casualty: admit first, register properly later. A patient registered at the door (unknown
+      -- name, no phone or age) is flagged until the desk completes them; an admission records whether it
+      -- came through casualty and, for a medico-legal case, the police intimation details.
+      alter table core.patient add column details_pending boolean not null default false;
+      alter table ipd.admission add column emergency boolean not null default false;
+      alter table ipd.admission add column mlc boolean not null default false;
+      alter table ipd.admission add column mlc_no text not null default '';
+      alter table ipd.admission add column police_station text not null default '';
+      alter table ipd.admission add column brought_by text not null default '';
+      alter table ipd.ward drop constraint ward_kind_check;
+      alter table ipd.ward add constraint ward_kind_check check (kind in ('GENERAL','SEMI_PRIVATE','PRIVATE','ICU','EMERGENCY','OTHER'));
+    `,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

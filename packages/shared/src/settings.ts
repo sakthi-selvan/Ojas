@@ -29,6 +29,10 @@ export const FacilityInput = z.object({
   drugLicence: z.string().trim().max(120).default(""),
   /** Prefix for patient IDs, e.g. "OJ-" → OJ-000123. Can only change before the first patient is registered. */
   uhidPrefix: z.string().trim().toUpperCase().regex(/^[A-Z]{1,5}-?$/, "1–5 letters, optionally ending with a dash"),
+  /** GST on in-patient room rent (non-ICU) above `roomGstAbove` per day; 0 turns it off. */
+  roomGstPercent: z.number({ error: "Enter a percentage" }).min(0, "0 or more").max(28, "At most 28%").default(5),
+  /** Paise per day; a room charging more than this pays GST on its whole rent. */
+  roomGstAbove: z.number({ error: "Enter an amount" }).int().min(0, "0 or more").default(500_000),
 });
 export type FacilityInput = z.input<typeof FacilityInput>;
 
@@ -41,6 +45,8 @@ export interface Facility {
   receiptFooter: string;
   drugLicence: string;
   uhidPrefix: string;
+  roomGstPercent: number;
+  roomGstAbove: number;
   /** False until the administrator finishes the first-run wizard. */
   setupCompleted: boolean;
   /** UHID prefix is locked once patients exist. */

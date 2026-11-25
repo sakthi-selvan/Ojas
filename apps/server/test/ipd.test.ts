@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { expandBeds, midnightsBetween, type Admission, type AdmissionSummary, type IpdService, type Patient, type Practitioner, type Ward } from "@ojas/shared";
+import { doseCounts, doseSlots, doseTiming, expandBeds, midnightsBetween, roomGstBp, type WardMeds, type Admission, type AdmissionSummary, type IpdService, type Patient, type Practitioner, type Ward } from "@ojas/shared";
 import type { Db } from "../src/db/index.js";
 import { ADMIN, makeApp, setupAdmin, userWithRole, type Client } from "./helpers.js";
 
@@ -201,5 +201,226 @@ describe("admission to discharge", () => {
     r = ok(await desk.post(`/api/ipd/admissions/${r.id}/discharge`, { paymentMode: "CASH", expectedSubtotal: 120_000, idempotencyKey: randomUUID() }));
     expect(r.bill).toMatchObject({ days: 1, total: 120_000, paid: 120_000, balance: 0 });
     expect(r.payments.at(-1)).toMatchObject({ kind: "REFUND", amount: 880_000 });
+  });
+});
+
+describe("pharmacy and lab on the in-patient bill", () => {
+  it("charges counter bills to the admission instead of taking payment, and settles them at discharge", async () => {
+    await at(26, 9);
+    const chemist = (await userWithRole(server, admin, "PHARMACY", "chem1")).client;
+    const tech = (await userWithRole(server, admin, "LAB", "lab1")).client;
+    const kumar = ok<Patient>(await admin.post("/api/patients", { name: "Kumar S", sex: "M", phone: "9876509999", ageYears: 60 }), 201);
+    const a = ok<Admission>(await admit(kumar, bed(general, "G3").id, { deposit: 200_000 }), 201);
+
+    // The counters see who is admitted.
+    const inpatients = ok<{ admissionId: string; patient: { name: string }; bedLabel: string }[]>(await chemist.get("/api/ipd/inpatients"));
+    expect(inpatients.map((x) => [x.patient.name, x.bedLabel])).toEqual([["Kumar S", "G3"]]);
+    expect((await accounts.get("/api/ipd/inpatients")).statusCode).toBe(200);
+
+    // Pharmacy: stock one medicine, then sell it onto the IP bill.
+    const item = ok<{ id: string }>(await chemist.post("/api/pharmacy/items", { name: "Ceftriaxone", strength: "1 g", form: "INJ", packSize: 1, gstRate: 12 }), 201);
+    const sup = ok<{ id: string }>(await chemist.post("/api/pharmacy/suppliers", { name: "City Pharma" }), 201);
+    ok(await chemist.post("/api/pharmacy/purchases", {
+      supplierId: sup.id, invoiceNo: "C-1", invoiceDate: "2026-11-25", idempotencyKey: randomUUID(),
+      lines: [{ itemId: item.id, batchNo: "CF1", expiry: "2027-12", packs: 10, ratePerPack: 3000, mrpPerPack: 5_000, gstRate: 12 }],
+    }), 201);
+    const sale = (body: object) => chemist.post("/api/pharmacy/sales", {
+      patientId: kumar.id, customerName: "Kumar S", lines: [{ itemId: item.id, qty: 3 }], paymentMode: "CASH", idempotencyKey: randomUUID(), ...body,
+    });
+    expect((await sale({ admissionId: a.id, patientId: meena.id })).json().code).toBe("wrong_patient");
+    const ph = ok<{ paymentMode: string; admissionNo: string; total: number }>(await sale({ admissionId: a.id }), 201);
+    expect(ph).toMatchObject({ paymentMode: "IPD", admissionNo: a.admissionNo, total: 15_000 });
+
+    // Lab: a priced test billed onto the admission; the admitting doctor is the referrer.
+    ok(await admin.post("/api/lab/tests/starter"));
+    const full = (await admin.get("/api/lab/tests?q=cbc")).json()[0];
+    ok(await admin.put(`/api/lab/tests/${full.id}`, { ...full, price: 30_000 }));
+    const order = ok<{ paymentMode: string; referredBy: string; admissionNo: string }>(
+      await tech.post("/api/lab/orders", { patientId: kumar.id, testIds: [full.id], paymentMode: "CASH", admissionId: a.id, idempotencyKey: randomUUID() }), 201);
+    expect(order).toMatchObject({ paymentMode: "IPD", admissionNo: a.admissionNo, referredBy: doc.name });
+
+    let now = ok<Admission>(await desk.get(`/api/ipd/admissions/${a.id}`));
+    expect(now.bill.lines.filter((l) => l.category === "MEDICINE" || l.category === "INVESTIGATION").map((l) => [l.category, l.amount])).toEqual([["MEDICINE", 15_000], ["INVESTIGATION", 30_000]]);
+    expect(now.bill.subtotal).toBe(120_000 + 15_000 + 30_000);
+
+    // Settle and discharge: the counter bills are paid with everything else; afterwards they can't be added.
+    now = ok(await doctor.put(`/api/ipd/admissions/${a.id}/summary`, { summaryVersion: 0, diagnoses: [{ text: "Cellulitis" }], conditionAtDischarge: "Better" }));
+    now = ok(await doctor.post(`/api/ipd/admissions/${a.id}/summary/sign`, { summaryVersion: 1 }));
+    now = ok(await desk.post(`/api/ipd/admissions/${a.id}/discharge`, { paymentMode: "CASH", expectedSubtotal: 165_000, idempotencyKey: randomUUID() }));
+    expect(now.payments.at(-1)).toMatchObject({ kind: "REFUND", amount: 35_000 });
+    expect((await sale({ admissionId: a.id })).json().code).toBe("already_discharged");
+  });
+});
+
+describe("dose schedule", () => {
+  const order = (frequency: string, startedAt: Date, doses: [Date, "GIVEN" | "HELD"][] = [], extra: object = {}) => ({
+    id: "m", med: { drug: "X", dose: "", frequency, timing: "ANY" as const, route: "ORAL" as const, durationDays: null, instructions: "" },
+    startedAt: startedAt.toISOString(), startedBy: "", stoppedAt: null, stoppedBy: null, stopReason: "",
+    doses: doses.map(([d, status], i) => ({ id: String(i), status, note: "", at: d.toISOString(), by: "" })), ...extra,
+  });
+  const states = (m: ReturnType<typeof order>, now: Date) =>
+    doseSlots(m, now).map((s) => `${new Date(s.at).getHours()}:${s.state}`);
+
+  it("reads the usual frequencies as ward times", () => {
+    expect(doseTiming("1-0-1")).toEqual({ kind: "times", hours: [8, 20] });
+    expect(doseTiming("1-1-1-1")).toEqual({ kind: "times", hours: [8, 13, 18, 22] });
+    expect(doseTiming(" tds ")).toEqual({ kind: "times", hours: [8, 14, 20] });
+    expect(doseTiming("Q8H")).toEqual({ kind: "times", hours: [6, 14, 22] });
+    expect(doseTiming("Stat")).toEqual({ kind: "once" });
+    for (const f of ["SOS", "PRN", "Weekly", "", "as directed"]) expect(doseTiming(f)).toEqual({ kind: "as-needed" });
+  });
+
+  it("matches doses to their times; unrecorded times go overdue an hour after", () => {
+    const m = order("TDS", new Date(2026, 10, 20, 7), [[new Date(2026, 10, 20, 8, 20), "GIVEN"], [new Date(2026, 10, 20, 15, 30), "HELD"]]);
+    expect(states(m, new Date(2026, 10, 20, 19, 10))).toEqual(["8:DONE", "14:DONE", "20:DUE"]);
+    expect(states(m, new Date(2026, 10, 20, 21, 5))).toEqual(["8:DONE", "14:DONE", "20:LATE"]);
+    // A second dose close to the first is an extra, not a catch-up for an earlier gap.
+    const twice = order("BD", new Date(2026, 10, 20, 7), [[new Date(2026, 10, 20, 20), "GIVEN"], [new Date(2026, 10, 20, 20, 30), "GIVEN"]]);
+    expect(states(twice, new Date(2026, 10, 20, 22))).toEqual(["8:LATE", "20:DONE"]);
+    // Ordered mid-morning: the 8 o'clock dose isn't expected; a stat dose is due at once.
+    expect(states(order("BD", new Date(2026, 10, 20, 11)), new Date(2026, 10, 20, 12))).toEqual(["20:LATER"]);
+    expect(states(order("Stat", new Date(2026, 10, 20, 11)), new Date(2026, 10, 20, 11, 30))).toEqual(["11:DUE"]);
+    // The course ends after its days; as-needed medicines never go overdue.
+    const twoDays = order("OD", new Date(2026, 10, 18, 7), [], { med: { ...order("OD", new Date()).med, durationDays: 2 } });
+    expect(states(twoDays, new Date(2026, 10, 19, 12))).toEqual(["8:LATE"]);
+    expect(states(twoDays, new Date(2026, 10, 20, 12))).toEqual([]);
+    expect(doseSlots(order("SOS", new Date(2026, 10, 18, 7)), new Date(2026, 10, 20, 12))).toEqual([]);
+  });
+
+  it("lists the ward's running medicines for the dose round", async () => {
+    await at(28, 7);
+    const lata = ok<Patient>(await admin.post("/api/patients", { name: "Lata M", sex: "F", phone: "9876507777", ageYears: 70 }), 201);
+    const free = (await board()).flatMap((w) => w.beds).find((b) => b.state === "FREE")!;
+    const a = ok<Admission>(await admit(lata, free.id), 201);
+    const cef = ok<Admission>(await doctor.post(`/api/ipd/admissions/${a.id}/meds`, { drug: "Inj. Ceftriaxone", dose: "1 g", frequency: "1-0-1", route: "IV" })).meds[0]!;
+    ok(await doctor.post(`/api/ipd/admissions/${a.id}/meds`, { drug: "Pantoprazole", dose: "40 mg", frequency: "OD" }));
+    ok(await doctor.post(`/api/ipd/admissions/${a.id}/meds`, { drug: "Paracetamol", dose: "650 mg", frequency: "SOS" }));
+    await at(28, 8, 10);
+    ok(await nurse.post(`/api/ipd/meds/${cef.id}/doses`, {}));
+    await at(28, 21, 30);
+    const round = ok<WardMeds[]>(await nurse.get("/api/ipd/doses"));
+    const mine = round.find((r) => r.admissionId === a.id)!;
+    expect(mine.meds.map((m) => m.med.drug)).toEqual(["Inj. Ceftriaxone", "Pantoprazole", "Paracetamol"]);
+    expect(doseCounts(mine.meds, clock)).toEqual({ due: 0, late: 2 });
+    expect((await (await userWithRole(server, admin, "PHARMACY", "chem2")).client.get("/api/ipd/doses")).statusCode).toBe(403);
+  });
+});
+
+describe("correcting a summary after discharge", () => {
+  it("keeps the old version with the reason, and the correcting doctor signs it", async () => {
+    await at(29, 10);
+    const done = ok<AdmissionSummary[]>(await desk.get("/api/ipd/admissions?status=DISCHARGED"));
+    const a = ok<Admission>(await doctor.get(`/api/ipd/admissions/${done[0]!.id}`));
+    const { summary } = a;
+    const body = { ...summary!, diagnoses: [...summary!.diagnoses, { text: "Hypokalaemia", code: "E87.6" }], summaryVersion: a.summaryVersion };
+    // Ordinary saving stays locked after discharge; an amendment needs a reason and the right version.
+    expect((await doctor.put(`/api/ipd/admissions/${a.id}/summary`, body)).json().code).toBe("already_discharged");
+    expect((await doctor.post(`/api/ipd/admissions/${a.id}/summary/amend`, body)).statusCode).toBe(400);
+    expect((await nurse.post(`/api/ipd/admissions/${a.id}/summary/amend`, { ...body, reason: "Missed diagnosis" })).statusCode).toBe(403);
+    expect((await doctor.post(`/api/ipd/admissions/${a.id}/summary/amend`, { ...body, summaryVersion: a.summaryVersion - 1, reason: "Missed diagnosis" })).json().code).toBe("changed_elsewhere");
+
+    const b = ok<Admission>(await doctor.post(`/api/ipd/admissions/${a.id}/summary/amend`, { ...body, reason: "Added missed diagnosis from the potassium report" }));
+    expect(b.summary!.diagnoses.map((d) => d.text)).toContain("Hypokalaemia");
+    expect(b.summaryVersion).toBe(a.summaryVersion + 1);
+    expect(b.summarySignedBy).toBe("DOCTOR drkavya");
+    expect(b.amendments).toEqual([{ version: b.summaryVersion, at: clock.toISOString(), by: "DOCTOR drkavya", reason: "Added missed diagnosis from the potassium report" }]);
+    const kept = (await db.query<{ previous: { diagnoses: unknown[] } }>("select previous from ipd.summary_amendment where admission_id = $1", [a.id])).rows[0]!;
+    expect(kept.previous.diagnoses).toHaveLength(summary!.diagnoses.length);
+
+    // Still admitted: amend isn't the way.
+    const open = ok<AdmissionSummary[]>(await desk.get("/api/ipd/admissions?status=ADMITTED"));
+    expect((await doctor.post(`/api/ipd/admissions/${open[0]!.id}/summary/amend`, { ...body, reason: "Wrong place" })).json().code).toBe("not_discharged");
+  });
+});
+
+describe("GST on room rent", () => {
+  it("taxes a non-ICU room over the daily limit on its whole rent, keeps each stay's rate, and shares the discount", async () => {
+    await at(30, 10);
+    const priv = ok<Ward>(await admin.post("/api/ipd/wards", { name: "Private", kind: "PRIVATE", bedCharge: 600_000, nursingCharge: 50_000, beds: ["P1", "P2"] }), 201);
+    const p = ok<Patient>(await admin.post("/api/patients", { name: "Gita R", sex: "F", phone: "9876506666", ageYears: 45 }), 201);
+    let a = ok<Admission>(await admit(p, bed(priv, "P1").id), 201);
+    await at(32, 9);
+    a = ok(await desk.get(`/api/ipd/admissions/${a.id}`));
+    // ₹6,000 a day is over ₹5,000: 5% on the whole ₹12,000 of rent (not on nursing), split CGST + SGST.
+    expect(a.bill.taxLines).toMatchObject([{ rent: 1_200_000, taxable: 1_200_000, ratePercent: 5, cgst: 30_000, sgst: 30_000, amount: 60_000 }]);
+    expect(a.bill).toMatchObject({ subtotal: 1_300_000, tax: 60_000, total: 1_360_000, balance: 1_360_000 });
+
+    // Raising the limit to ₹10,000 applies to stays that start afterwards, not to the nights already taxed.
+    const f = ok<Record<string, unknown>>(await admin.get("/api/settings/facility"));
+    expect(f).toMatchObject({ roomGstPercent: 5, roomGstAbove: 500_000 });
+    const { setupCompleted: _s, hasPatients: _h, ...input } = f;
+    ok(await admin.put("/api/settings/facility", { ...input, roomGstAbove: 1_000_000 }));
+    ok(await desk.post(`/api/ipd/admissions/${a.id}/transfer`, { bedId: bed(priv, "P2").id, reason: "Patient asked for a quieter room" }));
+    await at(33, 9);
+    a = ok(await desk.get(`/api/ipd/admissions/${a.id}`));
+    expect(a.bill.subtotal).toBe(1_950_000);
+    expect(a.bill.taxLines.map((t) => [t.rent, t.amount])).toEqual([[1_200_000, 60_000]]);
+    ok(await admin.put("/api/settings/facility", { ...input, roomGstAbove: 500_000 }));
+
+    // A 10% discount lowers the taxable rent by 10% too: 5% of ₹10,800 = ₹540.
+    a = ok(await doctor.put(`/api/ipd/admissions/${a.id}/summary`, { summaryVersion: 0, diagnoses: [{ text: "Acute gastroenteritis" }], conditionAtDischarge: "Well" }));
+    a = ok(await doctor.post(`/api/ipd/admissions/${a.id}/summary/sign`, { summaryVersion: 1 }));
+    a = ok(await accounts.post(`/api/ipd/admissions/${a.id}/discharge`, { discount: 195_000, paymentMode: "UPI", expectedSubtotal: 1_950_000, idempotencyKey: randomUUID() }));
+    expect(a.bill).toMatchObject({ subtotal: 1_950_000, discount: 195_000, tax: 54_000, total: 1_809_000, paid: 1_809_000, balance: 0 });
+    expect(a.bill.taxLines[0]).toMatchObject({ taxable: 1_080_000, cgst: 27_000, sgst: 27_000 });
+    expect(a.payments.at(-1)).toMatchObject({ kind: "FINAL", amount: 1_809_000 });
+  });
+
+  it("never taxes ICU, and the rule is pure", () => {
+    const rule = { bp: 500, above: 500_000 };
+    expect(roomGstBp("ICU", 2_000_000, rule)).toBe(0);
+    expect(roomGstBp("PRIVATE", 500_000, rule)).toBe(0);
+    expect(roomGstBp("PRIVATE", 500_001, rule)).toBe(500);
+    expect(roomGstBp("GENERAL", 900_000, { bp: 0, above: 0 })).toBe(0);
+  });
+});
+
+describe("emergency (casualty) admission", () => {
+  it("admits an unknown patient straight to a casualty bed, with no advance, and the doctor on duty can do it", async () => {
+    await at(34, 2);
+    const cas = ok<Ward>(await admin.post("/api/ipd/wards", { name: "Casualty", kind: "EMERGENCY", bedCharge: 80_000, beds: ["C1", "C2"] }), 201);
+    const key = randomUUID();
+    const body = {
+      newPatient: { sex: "M", ageYears: 30 }, practitionerId: doc.id, bedId: bed(cas, "C1").id, reason: "Road accident, head injury, unconscious",
+      mlc: true, policeStation: "Anna Nagar", broughtBy: "108 ambulance", idempotencyKey: key,
+    };
+    const a = ok<Admission>(await doctor.post("/api/ipd/emergency", body), 201);
+    expect(a).toMatchObject({
+      status: "ADMITTED", emergency: true, detailsPending: true, patient: { name: "Unknown man", phone: "", sex: "M" },
+      mlc: { no: "", policeStation: "Anna Nagar", broughtBy: "108 ambulance" }, bed: { label: "C1", wardKind: "EMERGENCY" },
+    });
+    expect(a.payments).toEqual([]);
+    // A double tap admits once.
+    expect(ok<Admission>(await doctor.post("/api/ipd/emergency", body), 201).id).toBe(a.id);
+    expect((await nurse.post("/api/ipd/emergency", { ...body, idempotencyKey: randomUUID() })).statusCode).toBe(403);
+
+    const occ = (await board()).find((w) => w.id === cas.id)!.beds[0]!.occupant!;
+    expect(occ).toMatchObject({ emergency: true, mlc: true, detailsPending: true });
+    const listed = ok<AdmissionSummary[]>(await desk.get("/api/ipd/admissions")).find((x) => x.id === a.id)!;
+    expect(listed).toMatchObject({ emergency: true, mlc: true });
+  });
+
+  it("completes the patient's registration and the police number later; a full registration can't be changed this way", async () => {
+    const list = ok<AdmissionSummary[]>(await desk.get("/api/ipd/admissions"));
+    const er = list.find((x) => x.emergency)!;
+    expect((await desk.post(`/api/ipd/admissions/${er.id}/patient`, { name: "", sex: "M" })).statusCode).toBe(400);
+    let a = ok<Admission>(await desk.post(`/api/ipd/admissions/${er.id}/patient`, { name: "suresh BABU", sex: "M", ageYears: 31, phone: "9876507777" }));
+    expect(a).toMatchObject({ detailsPending: false, patient: { name: "Suresh Babu", phone: "9876507777" } });
+    expect((await desk.post(`/api/ipd/admissions/${er.id}/patient`, { name: "Someone Else", sex: "M", ageYears: 31 })).json().code).toBe("details_complete");
+    expect(ok<Patient[]>(await desk.get("/api/patients/search?q=9876507777"))[0]!.name).toBe("Suresh Babu");
+
+    a = ok(await doctor.put(`/api/ipd/admissions/${er.id}/mlc`, { mlc: true, mlcNo: "MLC/112/26", policeStation: "Anna Nagar", broughtBy: "108 ambulance" }));
+    expect(a.mlc).toEqual({ no: "MLC/112/26", policeStation: "Anna Nagar", broughtBy: "108 ambulance" });
+    expect((await accounts.put(`/api/ipd/admissions/${er.id}/mlc`, { mlc: false })).statusCode).toBe(403);
+  });
+
+  it("admits a known patient through casualty; a named walk-in with a phone and age needs no completing", async () => {
+    await at(34, 3);
+    const cas = (await board()).find((w) => w.kind === "EMERGENCY")!;
+    const known = ok<Patient>(await admin.post("/api/patients", { name: "Lakshmi N", sex: "F", phone: "9876508888", ageYears: 60 }), 201);
+    const a = ok<Admission>(await desk.post("/api/ipd/emergency", { patientId: known.id, practitionerId: doc.id, bedId: bed(cas, "C2").id, reason: "Chest pain", idempotencyKey: randomUUID() }), 201);
+    expect(a).toMatchObject({ emergency: true, detailsPending: false, mlc: null, patient: { id: known.id } });
+    const res = await desk.post("/api/ipd/emergency", { practitionerId: doc.id, bedId: bed(general, "G3").id, reason: "Fall", idempotencyKey: randomUUID() });
+    expect(res.statusCode).toBe(400);
   });
 });

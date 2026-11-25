@@ -14,6 +14,7 @@ import { getPractitioner } from "../front-desk/scheduling.js";
 export async function getFacility(q: Queryable): Promise<Facility> {
   const { rows } = await q.query<Facility>(
     `select name, address, phone, email, gstin, receipt_footer as "receiptFooter", drug_licence as "drugLicence", uhid_prefix as "uhidPrefix",
+            (room_gst_bp / 100.0)::float8 as "roomGstPercent", room_gst_above as "roomGstAbove",
             setup_completed as "setupCompleted", exists(select 1 from core.patient) as "hasPatients"
        from core.facility where id = 1`,
   );
@@ -37,8 +38,8 @@ export async function updateFacility(db: Db, actor: Actor, raw: unknown): Promis
     }
     await q.query(
       `update core.facility set name = $1, address = $2, phone = $3, email = $4, gstin = $5, receipt_footer = $6, uhid_prefix = $7,
-              drug_licence = $9, updated_at = now(), updated_by = $8, row_version = row_version + 1 where id = 1`,
-      [v.name, v.address, v.phone, v.email, v.gstin, v.receiptFooter, v.uhidPrefix, actor.user, v.drugLicence],
+              drug_licence = $9, room_gst_bp = $10, room_gst_above = $11, updated_at = now(), updated_by = $8, row_version = row_version + 1 where id = 1`,
+      [v.name, v.address, v.phone, v.email, v.gstin, v.receiptFooter, v.uhidPrefix, actor.user, v.drugLicence, Math.round(v.roomGstPercent * 100), v.roomGstAbove],
     );
     await audit(q, actor, "settings.facility", "facility", "1", { ...v });
     return getFacility(q);

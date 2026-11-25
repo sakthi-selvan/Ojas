@@ -1,18 +1,18 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Banknote, ClipboardList, CreditCard, Smartphone, Trash2 } from "lucide-react";
+import { Banknote, BedDouble, ClipboardList, CreditCard, Smartphone, Trash2 } from "lucide-react";
 import {
-  formatINR, itemLabel, lineAmount, needsPrescriber, type Item, type PaymentMode, type PendingPrescription, type PharmacyBill,
+  formatINR, itemLabel, lineAmount, needsPrescriber, type CounterMode, type Item, type PendingPrescription, type PharmacyBill,
 } from "@ojas/shared";
 import { api, ApiError, timeLabel, today } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useHotkeys } from "../../lib/hotkeys";
-import { Alert, Badge, Button, Card, Field, Segmented, cx } from "../../components/ui";
+import { Alert, Badge, Button, Card, Field, Segmented, Select, cx } from "../../components/ui";
 import { ItemSearch, scheduleBadge } from "./ItemSearch";
 import { PharmacyBillView } from "./PharmacyBillView";
 
 interface Line { item: Item; qty: number }
-interface Customer { name: string; phone: string; prescriber: string; patientId?: string; appointmentId?: string; uhid?: string }
+interface Customer { name: string; phone: string; prescriber: string; patientId?: string; appointmentId?: string; uhid?: string; admissionId?: string }
 const blank: Customer = { name: "", phone: "", prescriber: "" };
 
 /**
@@ -25,7 +25,7 @@ export function SellPanel() {
   const [customer, setCustomer] = useState<Customer>(blank);
   const [lines, setLines] = useState<Line[]>([]);
   const [unmatched, setUnmatched] = useState<string[]>([]);
-  const [mode, setMode] = useState<PaymentMode>("CASH");
+  const [mode, setMode] = useState<CounterMode>("CASH");
   const [discountText, setDiscountText] = useState("");
   const [bill, setBill] = useState<PharmacyBill | null>(null);
   const [errs, setErrs] = useState<Record<string, string>>({});
@@ -36,6 +36,10 @@ export function SellPanel() {
 
   const pending = useQuery({ queryKey: ["pharmacy-prescriptions"], queryFn: api.pendingPrescriptions, refetchInterval: 30_000 });
   const sales = useQuery({ queryKey: ["pharmacy-sales", today()], queryFn: () => api.sales(today()) });
+  const inpatients = useQuery({ queryKey: ["ipd-inpatients"], queryFn: api.inpatients });
+  /** Medicines for an admitted patient go on their in-patient bill, settled at discharge. */
+  const ip = customer.admissionId ? inpatients.data?.find((i) => i.admissionId === customer.admissionId) : undefined;
+  const payMode: CounterMode = mode === "IPD" && !ip ? "CASH" : mode;
 
   const canDiscount = can("billing.discount");
   const subtotal = lines.reduce((s, l) => s + (l.item.mrpPerPack != null ? lineAmount(l.item.mrpPerPack, l.qty, l.item.packSize) : 0), 0);
@@ -50,13 +54,23 @@ export function SellPanel() {
 
   const loadPrescription = (p: PendingPrescription) => {
     setCustomer({ name: p.patientName, phone: p.patientPhone, prescriber: p.prescriber, patientId: p.patientId, appointmentId: p.appointmentId, uhid: p.uhid });
+    if (mode === "IPD") setMode("CASH");
     setLines(p.lines.filter((l) => l.item).map((l) => ({ item: l.item!, qty: Math.max(1, l.suggestedQty) })));
     setUnmatched(p.lines.filter((l) => !l.item).map((l) => l.drug));
     setErrs({});
   };
 
+  const pickInpatient = (admissionId: string) => {
+    const i = inpatients.data?.find((x) => x.admissionId === admissionId);
+    if (!i) { setCustomer(blank); setMode("CASH"); return; }
+    setCustomer({ name: i.patient.name, phone: i.patient.phone, prescriber: i.doctorName, patientId: i.patient.id, uhid: i.patient.uhid, admissionId: i.admissionId });
+    setMode("IPD");
+    setErrs({});
+  };
+
   const reset = () => {
     setCustomer(blank);
+    setMode("CASH");
     setLines([]);
     setUnmatched([]);
     setDiscountText("");
@@ -76,7 +90,8 @@ export function SellPanel() {
         appointmentId: customer.appointmentId,
         lines: lines.map((l) => ({ itemId: l.item.id, qty: l.qty })),
         discount,
-        paymentMode: mode,
+        paymentMode: payMode === "IPD" ? "CASH" : payMode,
+        admissionId: payMode === "IPD" ? ip?.admissionId : undefined,
         idempotencyKey: idemKey.current,
       }),
     onSuccess: (b) => {
@@ -99,8 +114,14 @@ export function SellPanel() {
   return (
     <div className="grid items-start gap-4 lg:grid-cols-[1fr_22rem]">
       <Card className="flex flex-col gap-4 p-4 sm:p-6">
+        {(inpatients.data?.length ?? 0) > 0 && (
+          <Select label="In-patient (medicines go on the IP bill)" value={customer.admissionId ?? ""} onChange={(e) => pickInpatient(e.target.value)}>
+            <option value="">Not an in-patient</option>
+            {inpatients.data!.map((i) => <option key={i.admissionId} value={i.admissionId}>{i.patient.name} · {i.wardName} {i.bedLabel} · {i.admissionNo}</option>)}
+          </Select>
+        )}
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Customer" value={customer.name} onChange={(e) => { fix("customerName"); setCustomer((c) => ({ ...c, name: e.target.value, patientId: undefined, uhid: undefined })); }} placeholder="Walk-in customer" hint={customer.uhid ? `Patient ${customer.uhid}` : undefined} error={errs.customerName} />
+          <Field label="Customer" value={customer.name} onChange={(e) => { fix("customerName"); setCustomer((c) => ({ ...c, name: e.target.value, patientId: undefined, uhid: undefined, admissionId: undefined })); }} placeholder="Walk-in customer" hint={customer.uhid ? `Patient ${customer.uhid}` : undefined} error={errs.customerName} />
           <Field label="Phone (optional)" inputMode="tel" value={customer.phone} onChange={(e) => { fix("customerPhone"); setCustomer((c) => ({ ...c, phone: e.target.value })); }} error={errs.customerPhone} />
           <Field
             label={scheduled ? "Prescribing doctor (required)" : "Prescribing doctor"}
@@ -173,9 +194,10 @@ export function SellPanel() {
           <Segmented
             label="Payment"
             name="ph-mode"
-            value={mode}
+            value={payMode}
             onChange={setMode}
             options={[
+              ...(ip ? [{ value: "IPD" as const, label: "IP bill", icon: <BedDouble aria-hidden className="size-4" /> }] : []),
               { value: "CASH", label: "Cash", icon: <Banknote aria-hidden className="size-4" /> },
               { value: "UPI", label: "UPI", icon: <Smartphone aria-hidden className="size-4" /> },
               { value: "CARD", label: "Card", icon: <CreditCard aria-hidden className="size-4" /> },
@@ -191,12 +213,12 @@ export function SellPanel() {
 
         <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">
           <div>
-            <div className="text-sm text-ink-2">To pay{discount > 0 ? ` (after ${formatINR(discount)} off)` : ""}</div>
+            <div className="text-sm text-ink-2">{payMode === "IPD" ? `Add to IP bill ${ip?.admissionNo}` : "To pay"}{discount > 0 ? ` (after ${formatINR(discount)} off)` : ""}</div>
             <div className="text-3xl font-bold tabular-nums">{formatINR(Math.max(0, subtotal - discount))}</div>
           </div>
           <span className="text-xs text-ink-3">Prices include GST. The bill uses each batch's own MRP.</span>
           <Button variant="primary" size="lg" className="ml-auto" onClick={submit} disabled={!lines.length || sell.isPending} shortcut="F9">
-            {sell.isPending ? "Billing…" : "Bill & take payment"}
+            {sell.isPending ? "Billing…" : payMode === "IPD" ? "Add to IP bill" : "Bill & take payment"}
           </Button>
           {(lines.length > 0 || customer.name) && <Button variant="ghost" onClick={reset}>Clear</Button>}
         </div>

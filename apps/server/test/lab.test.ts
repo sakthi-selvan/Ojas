@@ -2,11 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import {
-  TestInput, interpret, pickRange,
+  TestInput, ageBandText, interpret, pickRange,
   type DaySlots, type LabOrderDetail, type LabOrderSummary, type LabRequest, type LabTest, type OrderTest, type Patient, type PatientLabResult, type Practitioner, type Receipt,
 } from "@ojas/shared";
 import type { Db } from "../src/db/index.js";
 import { makeApp, setupAdmin, userWithRole, type Client } from "./helpers.js";
+import { STARTER_TESTS } from "../src/modules/lab/starter.js";
 
 const NOW = new Date(2026, 10, 20, 9, 0);
 let db: Db;
@@ -220,5 +221,54 @@ describe("laboratory", () => {
     expect((await bill({ appointmentId, patientId: other.id, testIds: [tests.CBC!.id] })).statusCode).toBe(422);
     expect((await bill({ appointmentId, testIds: [tests.CBC!.id, tests.FBS!.id] })).statusCode).toBe(201);
     expect(((await tech.get("/api/lab/requests")).json() as LabRequest[]).some((r) => r.appointmentId === appointmentId)).toBe(false);
+  });
+});
+
+describe("children's reference ranges", () => {
+  const ok = <T = any>(res: { statusCode: number; body: string; json: () => unknown }): T => { expect(res.statusCode, res.body).toBe(200); return res.json() as T; };
+  const starter = () => STARTER_TESTS.map((t) => TestInput.parse(t));
+  const param = (code: string, id: string) => starter().find((t) => t.code === code)!.parameters.find((p) => p.id === id)! as never;
+  const days = (n: number) => n / 365.25;
+
+  it("the starter catalogue is valid, and reads a newborn, a toddler and a teenager against their own ranges", () => {
+    expect(starter()).toHaveLength(STARTER_TESTS.length);
+    // Hb 21 is normal at 3 days (not critical, as it would be for an adult), low at 4 years, normal for an adult woman's 12.5.
+    expect(interpret(param("CBC", "hb"), "21", "M", days(3))).toMatchObject({ flag: null, refText: "14.5 – 22.5" });
+    expect(interpret(param("CBC", "hb"), "21", "M", 40)!.flag).toBe("HH");
+    expect(interpret(param("CBC", "hb"), "11", "F", 4)).toMatchObject({ flag: "L", refText: "11.5 – 13.5" });
+    expect(interpret(param("CBC", "hb"), "12.5", "M", 15)).toMatchObject({ flag: "L", refText: "13.0 – 16.0" });
+    // A newborn's glucose of 42 is low, not critical; 38 is critical.
+    expect(interpret(param("FBS", "glu"), "42", "F", days(2))!.flag).toBe("L");
+    expect(interpret(param("FBS", "glu"), "38", "F", days(2))!.flag).toBe("LL");
+    // ALP of 300 is normal for a 7-year-old and high for an adult.
+    expect(interpret(param("LFT", "alp"), "300", "M", 7)!.flag).toBeNull();
+    expect(interpret(param("LFT", "alp"), "300", "M", 30)!.flag).toBe("H");
+  });
+
+  it("marks an adult range used for a child, and shows age bands in days, months and years", () => {
+    expect(interpret(param("CBC", "lymph"), "60", "M", 3)).toMatchObject({ flag: "H", refText: "20 – 40 (adult range)" });
+    expect(interpret(param("CBC", "lymph"), "30", "M", 30)!.refText).toBe("20 – 40");
+    expect(ageBandText({ ageFrom: 0, ageTo: days(7) })).toBe("0–7 days");
+    expect(ageBandText({ ageFrom: 1 / 12, ageTo: 0.5 })).toBe("1–6 months");
+    expect(ageBandText({ ageFrom: days(7), ageTo: 1 / 12 })).toBe("7–30 days");
+    expect(ageBandText({ ageFrom: 12, ageTo: null })).toBe("12 years and over");
+    expect(ageBandText({ ageFrom: null, ageTo: null })).toBe("");
+  });
+
+  it("adds children's ranges to a catalogue loaded before them, without touching the lab's own age ranges", async () => {
+    const cbc = ok<LabTest[]>(await tech.get("/api/lab/tests?q=CBC")).find((t) => t.code === "CBC")!;
+    const adultOnly = cbc.parameters.map((p) => ({ ...p, ranges: p.ranges.filter((x) => x.ageFrom === null && x.ageTo === null) }));
+    // The lab wrote its own children's MCV range; that one stays as it is.
+    const mine = adultOnly.map((p) => (p.id === "mcv" ? { ...p, ranges: [...p.ranges, { sex: "ANY" as const, ageFrom: 0, ageTo: 18, low: 70, high: 100 }] } : p));
+    ok(await tech.put(`/api/lab/tests/${cbc.id}`, { ...cbc, parameters: mine }));
+    expect((await reception.post("/api/lab/tests/child-ranges", {})).statusCode).toBe(403);
+    const res = ok<{ tests: number; parameters: number }>(await tech.post("/api/lab/tests/child-ranges", {}));
+    expect(res.tests).toBeGreaterThanOrEqual(1);
+    const after = ok<LabTest[]>(await tech.get("/api/lab/tests?q=CBC")).find((t) => t.code === "CBC")!;
+    const hb = after.parameters.find((p) => p.id === "hb")!;
+    expect(hb.ranges.filter((x) => x.ageTo !== null)).toHaveLength(10);
+    expect(after.parameters.find((p) => p.id === "mcv")!.ranges.filter((x) => x.ageTo !== null)).toEqual([expect.objectContaining({ low: 70, high: 100 })]);
+    // Running it again changes nothing.
+    expect(ok<{ parameters: number }>(await tech.post("/api/lab/tests/child-ranges", {})).parameters).toBe(0);
   });
 });

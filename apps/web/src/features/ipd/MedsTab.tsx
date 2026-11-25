@@ -10,6 +10,7 @@ import { useAuth } from "../../lib/auth";
 import { Alert, Badge, Button, Card, Field, Select } from "../../components/ui";
 import { medLine } from "../consult/Prescription";
 import { useAdmissionUpdate } from "./AdmissionView";
+import { DoseTimes, useNow } from "./DoseRound";
 
 /** The treatment chart: the doctor orders and stops medicines; nurses record each dose as they give it. */
 export function MedsTab({ admission: a }: { admission: Admission }) {
@@ -56,6 +57,7 @@ function MedRow({ med: m, open }: { med: MedOrder; open: boolean }) {
   const [stopping, setStopping] = useState(false);
   const [reason, setReason] = useState("");
   const [history, setHistory] = useState(false);
+  const now = useNow();
   const dose = useMutation({
     mutationFn: (status: DoseStatus) => api.recordDose(m.id, { status, note: status === "GIVEN" ? "" : note }),
     onSuccess: (x) => { updated(x); setSkip(null); setNote(""); },
@@ -74,6 +76,7 @@ function MedRow({ med: m, open }: { med: MedOrder; open: boolean }) {
           <div className="text-xs text-ink-3">
             {last ? `Last: ${DOSE_STATUS_LABEL[last.status].toLowerCase()} ${dateTimeLabel(last.at)} by ${last.by}` : "No doses yet"} · {givenToday} given today
           </div>
+          {open && <div className="mt-1"><DoseTimes med={m} now={now} /></div>}
         </div>
         {open && can("ipd.chart") && (
           <div className="flex flex-wrap gap-1">

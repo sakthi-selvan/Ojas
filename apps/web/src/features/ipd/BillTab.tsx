@@ -47,6 +47,13 @@ export function BillTab({ admission: a, print }: { admission: Admission; print: 
             <tfoot className="text-right">
               <tr><td colSpan={3} className="p-2">Total</td><td className="p-2 pr-4 font-semibold tabular-nums">{formatINR(b.subtotal)}</td></tr>
               {b.discount > 0 && <tr><td colSpan={3} className="p-2">Discount</td><td className="p-2 pr-4 tabular-nums">− {formatINR(b.discount)}</td></tr>}
+              {b.taxLines.map((t, i) => (
+                <tr key={`tax-${i}`}>
+                  <td colSpan={3} className="p-2">GST {t.ratePercent}% on {formatINR(t.taxable)}: {t.description} <span className="text-xs text-ink-3">(CGST {formatINR(t.cgst)} + SGST {formatINR(t.sgst)})</span></td>
+                  <td className="p-2 pr-4 tabular-nums">{formatINR(t.amount)}</td>
+                </tr>
+              ))}
+              {(b.discount > 0 || b.tax > 0) && <tr><td colSpan={3} className="p-2">Bill amount</td><td className="p-2 pr-4 font-semibold tabular-nums">{formatINR(b.total)}</td></tr>}
               <tr><td colSpan={3} className="p-2">Paid (advances{open ? "" : ", final payment"} less refunds)</td><td className="p-2 pr-4 tabular-nums">{formatINR(b.paid)}</td></tr>
               <tr className={cx("text-base font-bold", b.balance > 0 ? "text-warn" : "text-ok")}>
                 <td colSpan={3} className="p-2">{b.balance > 0 ? "Balance due" : b.balance < 0 ? "Advance left over" : "Settled"}</td>

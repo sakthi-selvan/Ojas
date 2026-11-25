@@ -1,15 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BedDouble, CheckCircle2, Sparkles, UserRound } from "lucide-react";
-import { WARD_KIND_LABEL, ageLabel, formatINR, midnightsBetween, type Bed, type Ward } from "@ojas/shared";
+import { WARD_KIND_LABEL, ageLabel, formatINR, midnightsBetween, type Bed, type MedOrder, type Ward } from "@ojas/shared";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { Alert, Badge, Button, Card, cx } from "../../components/ui";
+import { DoseBadges, useNow, useWardDoses } from "./DoseRound";
 
 export const dayOfStay = (admittedAt: string, now = new Date()) => midnightsBetween(new Date(admittedAt), now).length + 1;
 
 /** Every ward and bed at a glance: who is where, which beds are free, and which are being cleaned. */
-export function BedBoard({ onOpen, onAdmit, onSetup }: { onOpen: (admissionId: string) => void; onAdmit?: (bedId: string) => void; onSetup?: () => void }) {
+export function BedBoard({ onOpen, onAdmit, onSetup }: { onOpen: (admissionId: string) => void; onAdmit?: (bedId: string, emergency: boolean) => void; onSetup?: () => void }) {
   const wards = useQuery({ queryKey: ["ipd-wards"], queryFn: () => api.wards() });
+  const doses = useWardDoses();
+  const now = useNow();
+  const medsOf = (admissionId: string) => doses.data?.find((d) => d.admissionId === admissionId)?.meds ?? [];
   if (wards.error) return <Alert tone="danger">{wards.error.message}</Alert>;
   if (!wards.data) return <p className="text-ink-3">Loading beds…</p>;
   if (!wards.data.length) {
@@ -30,13 +34,17 @@ export function BedBoard({ onOpen, onAdmit, onSetup }: { onOpen: (admissionId: s
         <Badge tone="ok">{count("FREE")} free</Badge>
         {count("CLEANING") > 0 && <Badge tone="warn">{count("CLEANING")} being cleaned</Badge>}
         {beds.some((b) => b.occupant?.dischargeAdvised) && <Badge tone="neutral">{beds.filter((b) => b.occupant?.dischargeAdvised).length} ready to go home</Badge>}
+        {beds.some((b) => b.occupant?.detailsPending) && <Badge tone="warn">{beds.filter((b) => b.occupant?.detailsPending).length} to register fully</Badge>}
       </div>
-      {wards.data.map((w) => <WardCard key={w.id} ward={w} onOpen={onOpen} onAdmit={onAdmit} />)}
+      {wards.data.map((w) => <WardCard key={w.id} ward={w} onOpen={onOpen} onAdmit={onAdmit} medsOf={medsOf} now={now} />)}
     </div>
   );
 }
 
-function WardCard({ ward: w, onOpen, onAdmit }: { ward: Ward; onOpen: (id: string) => void; onAdmit?: (bedId: string) => void }) {
+type DoseInfo = { medsOf: (admissionId: string) => MedOrder[]; now: Date };
+
+function WardCard({ ward: w, onOpen, onAdmit, medsOf, now }: { ward: Ward; onOpen: (id: string) => void; onAdmit?: (bedId: string, emergency: boolean) => void } & DoseInfo) {
+  const admitHere = onAdmit && ((bedId: string) => onAdmit(bedId, w.kind === "EMERGENCY"));
   return (
     <Card className="flex flex-col gap-3 p-4" aria-labelledby={`ward-${w.id}`}>
       <div className="flex flex-wrap items-baseline gap-2">
@@ -45,13 +53,13 @@ function WardCard({ ward: w, onOpen, onAdmit }: { ward: Ward; onOpen: (id: strin
         <span className="ml-auto text-sm text-ink-3">{w.beds.filter((b) => b.state === "FREE").length} of {w.beds.length} free</span>
       </div>
       <ul className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2">
-        {w.beds.map((b) => <li key={b.id}><BedTile bed={b} onOpen={onOpen} onAdmit={onAdmit} /></li>)}
+        {w.beds.map((b) => <li key={b.id}><BedTile bed={b} onOpen={onOpen} onAdmit={admitHere} medsOf={medsOf} now={now} /></li>)}
       </ul>
     </Card>
   );
 }
 
-function BedTile({ bed: b, onOpen, onAdmit }: { bed: Bed; onOpen: (id: string) => void; onAdmit?: (bedId: string) => void }) {
+function BedTile({ bed: b, onOpen, onAdmit, medsOf, now }: { bed: Bed; onOpen: (id: string) => void; onAdmit?: (bedId: string) => void } & DoseInfo) {
   const qc = useQueryClient();
   const { can } = useAuth();
   const ready = useMutation({ mutationFn: () => api.bedReady(b.id), onSuccess: () => qc.invalidateQueries({ queryKey: ["ipd-wards"] }) });
@@ -61,10 +69,16 @@ function BedTile({ bed: b, onOpen, onAdmit }: { bed: Bed; onOpen: (id: string) =
     return (
       <button type="button" onClick={() => onOpen(o.admissionId)} className={cx(base, "border-accent/40 bg-accent-soft/40 hover:bg-accent-soft")}>
         <span className="flex items-center gap-1.5 font-semibold"><BedDouble aria-hidden className="size-4 text-accent" /> {b.label}
-          {o.dischargeAdvised && <span className="ml-auto"><Badge tone="ok">Going home</Badge></span>}
+          <span className="ml-auto flex gap-1">
+            {o.emergency && <Badge tone="danger">ER</Badge>}
+            {o.mlc && <Badge tone="danger">MLC</Badge>}
+            {o.dischargeAdvised && <Badge tone="ok">Going home</Badge>}
+          </span>
         </span>
         <span className="truncate font-semibold">{o.patientName}</span>
+        {o.detailsPending && <span className="text-xs text-warn">Registration to complete</span>}
         <span className="truncate text-xs text-ink-2">{o.dob ? ageLabel(o.dob) : "—"} · {o.sex} · Day {dayOfStay(o.admittedAt)} · {o.doctorName}</span>
+        <span className="flex flex-wrap gap-1 empty:hidden"><DoseBadges meds={medsOf(o.admissionId)} now={now} /></span>
       </button>
     );
   }

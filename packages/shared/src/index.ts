@@ -9,6 +9,9 @@ export * from "./auth";
 export * from "./settings"; export * from "./backup"; export * from "./network"; export * from "./consult"; export * from "./pharmacy";
 export * from "./lab";
 export * from "./ipd";
+export * from "./doses";
+export * from "./accounts";
+import type { BillCancellation } from "./accounts";
 export * from "./primitives";
 import { Paise, Sex, PaymentMode, Phone } from "./primitives";
 import type { Session } from "./settings";
@@ -114,6 +117,8 @@ export interface Receipt {
   total: Paise;
   paymentMode: PaymentMode;
   facility: { name: string; address: string; phone: string; gstin: string; receiptFooter: string };
+  /** Set once the bill is cancelled and refunded. */
+  cancelled: BillCancellation | null;
 }
 
 // ───────────────────────── Queue ─────────────────────────
@@ -132,6 +137,8 @@ export interface QueueItem {
   practitionerName: string;
   /** A nurse (or the doctor) has recorded vitals for this visit. */
   vitalsRecorded: boolean;
+  /** The visit's bill, for reprinting or cancelling with a refund. */
+  invoiceId: string | null;
 }
 
 /** Messages pushed over the realtime socket. */

@@ -15,13 +15,14 @@ const opt = <T extends z.ZodTypeAny>(s: T) => s.nullable().optional();
 
 // ───────────────────────── Wards, beds and services ─────────────────────────
 
-export const WardKind = z.enum(["GENERAL", "SEMI_PRIVATE", "PRIVATE", "ICU", "OTHER"]);
+export const WardKind = z.enum(["GENERAL", "SEMI_PRIVATE", "PRIVATE", "ICU", "EMERGENCY", "OTHER"]);
 export type WardKind = z.infer<typeof WardKind>;
 export const WARD_KIND_LABEL: Record<WardKind, string> = {
   GENERAL: "General ward",
   SEMI_PRIVATE: "Semi-private",
   PRIVATE: "Private room",
   ICU: "ICU",
+  EMERGENCY: "Casualty / emergency",
   OTHER: "Other",
 };
 
@@ -67,6 +68,12 @@ export interface BedOccupant {
   doctorName: string;
   /** The doctor has signed the discharge summary; waiting for the bill to be settled. */
   dischargeAdvised: boolean;
+  /** Came in through casualty. */
+  emergency: boolean;
+  /** A medico-legal case: the police have to be told. */
+  mlc: boolean;
+  /** Registered in a hurry (unknown name, no phone or no age); the desk should complete it. */
+  detailsPending: boolean;
 }
 
 export interface Bed {
@@ -128,6 +135,54 @@ export const AdmitInput = z.object({
   idempotencyKey: z.uuid(),
 });
 export type AdmitInput = z.input<typeof AdmitInput>;
+
+/**
+ * A medico-legal case (road accident, assault, poisoning, burns, unexplained injury): the hospital
+ * must inform the police and keep the intimation number. The number often comes later, so it may be blank.
+ */
+export const MlcInput = z.object({
+  mlc: z.boolean().default(false),
+  mlcNo: text(40).default(""),
+  policeStation: text(80).default(""),
+  broughtBy: text(120).default(""),
+});
+export type MlcInput = z.input<typeof MlcInput>;
+export interface MlcDetails { no: string; policeStation: string; broughtBy: string }
+
+/** A casualty patient registered at the door: only the sex is needed. A blank name becomes "Unknown man/woman". */
+export const EmergencyPatientInput = z.object({
+  name: text(120).default(""),
+  sex: Sex,
+  /** Approximate is fine. */
+  ageYears: z.number().int().min(0).max(130).optional(),
+  phone: OptionalPhone,
+});
+export type EmergencyPatientInput = z.input<typeof EmergencyPatientInput>;
+
+/** Emergency (casualty) admission: no advance, no full registration, straight to a bed. */
+export const EmergencyAdmitInput = z.object({
+  patientId: z.uuid().optional(),
+  newPatient: EmergencyPatientInput.optional(),
+  practitionerId: z.uuid({ message: "Choose the doctor on duty" }),
+  bedId: z.uuid({ message: "Choose a bed" }),
+  reason: text(300).min(2, "What is the complaint or injury?"),
+  attendantName: text(80).default(""),
+  attendantRelation: text(40).default(""),
+  attendantPhone: OptionalPhone,
+  idempotencyKey: z.uuid(),
+  ...MlcInput.shape,
+}).refine((v) => !!v.patientId || !!v.newPatient, { message: "Choose the patient or enter who came in", path: ["patientId"] });
+export type EmergencyAdmitInput = z.input<typeof EmergencyAdmitInput>;
+
+/** Completing a casualty patient's registration once they or their family can tell. */
+export const PatientDetailsInput = z.object({
+  name: text(120).min(2, "Enter the patient's name"),
+  sex: Sex,
+  ageYears: z.number().int().min(0).max(130).optional(),
+  dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  phone: OptionalPhone,
+}).refine((v) => v.ageYears !== undefined || v.dob !== undefined, { message: "Enter age or date of birth", path: ["ageYears"] });
+export type PatientDetailsInput = z.input<typeof PatientDetailsInput>;
 
 export const TransferInput = z.object({
   bedId: z.uuid({ message: "Choose the new bed" }),
@@ -220,6 +275,11 @@ export type DischargeSummary = Omit<z.output<typeof SummaryInput>, "summaryVersi
   followUpDate: string | null;
 };
 
+/** Correcting a signed summary after discharge: the old version is kept, and the reason is recorded. */
+export const AmendSummaryInput = SummaryInput.extend({ reason: text(300).min(5, "Say what was corrected and why") });
+export type AmendSummaryInput = z.input<typeof AmendSummaryInput>;
+export interface SummaryAmendment { version: number; at: string; by: string; reason: string }
+
 export const SettleInput = z.object({
   discount: Paise.default(0),
   paymentMode: PaymentMode,
@@ -279,12 +339,51 @@ export interface IpdPayment { id: string; receiptNo: string; kind: IpdPaymentKin
 
 export interface BillLine { category: ChargeCategory | "BED"; description: string; quantity: number; unitPrice: Paise; amount: Paise }
 
+/** Someone in a bed now: what the pharmacy and lab counters need to charge to their bill. */
+export interface Inpatient {
+  admissionId: string;
+  admissionNo: string;
+  patient: IpdPatient;
+  wardName: string;
+  bedLabel: string;
+  doctorName: string;
+}
+
+/**
+ * GST on one stay's room rent: none for ICU or a room at or under the threshold per day; otherwise
+ * the rate applies to the whole rent (not just the part above the threshold).
+ */
+export function roomGstBp(kind: WardKind, bedCharge: Paise, rule: { bp: number; above: Paise }): number {
+  return kind === "ICU" || bedCharge <= rule.above ? 0 : rule.bp;
+}
+
+/** GST charged on room rent, split equally into central and state tax (hospital and patient in one state). */
+export interface TaxLine { description: string; rent: Paise; bp: number; taxable: Paise; ratePercent: number; cgst: Paise; sgst: Paise; amount: Paise }
+
+/**
+ * GST on each taxed stay's rent. A bill-wide discount lowers the taxable rent in proportion (GST is
+ * on the value after discount). Used by the server and by the settle screen as the discount is typed.
+ */
+export function roomTax(items: { description: string; rent: Paise; bp: number }[], subtotal: Paise, discount: Paise): TaxLine[] {
+  return items.map(({ description, rent, bp }) => {
+    const taxable = subtotal > 0 ? Math.round(rent - (rent * Math.min(discount, subtotal)) / subtotal) : rent;
+    const amount = Math.round((taxable * bp) / 10_000);
+    const cgst = Math.floor(amount / 2);
+    return { description, rent, bp, taxable, ratePercent: bp / 100, cgst, sgst: amount - cgst, amount };
+  });
+}
+export const taxOf = (lines: TaxLine[]): Paise => lines.reduce((t, l) => t + l.amount, 0);
+
 export interface IpdBill {
   /** Bed-days so far (midnight census, at least one). */
   days: number;
   lines: BillLine[];
   subtotal: Paise;
   discount: Paise;
+  /** GST on room rent, after its share of the discount. */
+  taxLines: TaxLine[];
+  tax: Paise;
+  /** subtotal − discount + tax. */
   total: Paise;
   /** Deposits and final payments, less refunds. */
   paid: Paise;
@@ -303,6 +402,12 @@ export interface Admission {
   doctor: { id: string; name: string; department: string; qualification: string; registrationNo: string };
   reason: string;
   attendant: { name: string; relation: string; phone: string };
+  /** Came in through casualty. */
+  emergency: boolean;
+  /** Medico-legal case details, or null when it isn't one. */
+  mlc: MlcDetails | null;
+  /** The patient was registered in a hurry and their details still need completing. */
+  detailsPending: boolean;
   bed: { id: string; label: string; wardId: string; wardName: string; wardKind: WardKind } | null;
   stays: BedStay[];
   notes: ChartNote[];
@@ -314,6 +419,8 @@ export interface Admission {
   summaryVersion: number;
   summarySignedAt: string | null;
   summarySignedBy: string | null;
+  /** Corrections made after discharge, oldest first. */
+  amendments: SummaryAmendment[];
   finalBillNo: string | null;
   bill: IpdBill;
   facility: { name: string; address: string; phone: string; email: string; gstin: string };
@@ -331,6 +438,8 @@ export interface AdmissionSummary {
   bedLabel: string;
   dischargeType: DischargeType | null;
   dischargeAdvised: boolean;
+  emergency: boolean;
+  mlc: boolean;
 }
 
 /** Days charged under the midnight census: local midnights in (from, to], at least one. */

@@ -9,7 +9,7 @@ interface WardRow { id: string; name: string; kind: Ward["kind"]; bed_charge: nu
 interface BedRow { id: string; ward_id: string; label: string; active: boolean; needs_cleaning: boolean }
 interface OccupantRow {
   bed_id: string; id: string; admission_no: string; p_name: string; uhid: string; sex: BedOccupant["sex"]; dob: string | null;
-  admitted_at: string; doctor_name: string; summary_signed_at: string | null;
+  admitted_at: string; doctor_name: string; summary_signed_at: string | null; emergency: boolean; mlc: boolean; details_pending: boolean;
 }
 
 /** Every ward with its beds and who is in each; inactive wards and beds only when asked (setup screen). */
@@ -18,7 +18,7 @@ export async function listWards(q: Queryable, opts: { includeInactive?: boolean 
   const wards = (await q.query<WardRow>("select * from ipd.ward where $1 or active order by name", [all])).rows;
   const beds = (await q.query<BedRow>("select * from ipd.bed where $1 or active order by ward_id, sort_no", [all])).rows;
   const occ = (await q.query<OccupantRow>(
-    `select a.bed_id, a.id, a.admission_no, p.name as p_name, p.uhid, p.sex, p.dob, a.admitted_at, d.name as doctor_name, a.summary_signed_at
+    `select a.bed_id, a.id, a.admission_no, p.name as p_name, p.uhid, p.sex, p.dob, a.admitted_at, d.name as doctor_name, a.summary_signed_at, a.emergency, a.mlc, p.details_pending
        from ipd.admission a join core.patient p on p.id = a.patient_id join core.practitioner d on d.id = a.practitioner_id
       where a.status = 'ADMITTED'`,
   )).rows;
@@ -33,6 +33,7 @@ export async function listWards(q: Queryable, opts: { includeInactive?: boolean 
         occupant: o ? {
           admissionId: o.id, admissionNo: o.admission_no, patientName: o.p_name, uhid: o.uhid, sex: o.sex, dob: o.dob,
           admittedAt: o.admitted_at, doctorName: o.doctor_name, dischargeAdvised: !!o.summary_signed_at,
+          emergency: o.emergency, mlc: o.mlc, detailsPending: o.details_pending,
         } : null,
       };
     }),

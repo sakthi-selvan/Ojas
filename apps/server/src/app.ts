@@ -15,7 +15,8 @@ import { isIsoDate, localDate } from "./core/clock.js";
 import { Realtime } from "./realtime.js";
 import { getPatient, quickRegister, searchPatients } from "./modules/front-desk/patients.js";
 import { listPractitioners, slotsFor } from "./modules/front-desk/scheduling.js";
-import { checkout, getReceipt } from "./modules/front-desk/checkout.js";
+import { cancelBill, checkout, getReceipt } from "./modules/front-desk/checkout.js";
+import { dayReport } from "./modules/reports/day.js";
 import { queueFor, setStatus } from "./modules/front-desk/queue.js";
 import * as auth from "./modules/auth/service.js";
 import * as settings from "./modules/settings/service.js";
@@ -285,7 +286,13 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     notifyQueue(localDate(new Date(receipt.slotStart)));
     return reply.status(201).send(receipt);
   });
-  app.get<{ Params: { id: string } }>("/api/invoices/:id/receipt", need("billing.collect"), async (req) => getReceipt(db, req.params.id));
+  app.get<{ Params: { id: string } }>("/api/invoices/:id/receipt", need("billing.collect"), async (req) => getReceipt(db, idParam(req.params.id)));
+  app.post<{ Params: { id: string } }>("/api/invoices/:id/cancel", need("billing.refund"), async (req) => {
+    const { receipt, visitDate } = await cancelBill(db, actorOf(req), idParam(req.params.id), req.body, now());
+    notifyQueue(visitDate);
+    return receipt;
+  });
+  app.get<{ Querystring: { date?: string } }>("/api/reports/day", need("billing.report"), async (req) => dayReport(db, dateParam(req.query.date)));
 
   // ── Queue ──
   app.get<{ Querystring: { date?: string; practitionerId?: string } }>("/api/queue", async (req) =>
@@ -345,9 +352,11 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.get("/api/pharmacy/stock/alerts", ph("pharmacy.stock"), async () => pharmacy.stockAlerts(db, today()));
   app.post("/api/pharmacy/stock/adjust", ph("pharmacy.stock"), async (req) => pharmacy.adjustStock(db, actorOf(req), req.body));
   app.get("/api/pharmacy/prescriptions", ph("pharmacy.sell"), async () => pharmacyTx.pendingPrescriptions(db, now()));
-  app.post("/api/pharmacy/sales", ph("pharmacy.sell"), async (req, reply) =>
-    reply.status(201).send(await pharmacyTx.sell(db, actorOf(req), req.body, now(), { allowDiscount: can(req.session!.user.role, "billing.discount") })),
-  );
+  app.post("/api/pharmacy/sales", ph("pharmacy.sell"), async (req, reply) => {
+    const bill = await pharmacyTx.sell(db, actorOf(req), req.body, now(), { allowDiscount: can(req.session!.user.role, "billing.discount") });
+    if (bill.admissionId) realtime.broadcast({ type: "ipd.changed", admissionId: bill.admissionId });
+    return reply.status(201).send(bill);
+  });
   app.get<{ Querystring: { date?: string } }>("/api/pharmacy/sales", ph("pharmacy.sell"), async (req) => pharmacyTx.listSales(db, dateParam(req.query.date ?? today())));
   app.get<ById>("/api/pharmacy/sales/:id", ph("pharmacy.sell"), async (req) => pharmacyTx.getBill(db, idParam(req.params.id)));
   app.get<{ Querystring: { from?: string; to?: string; schedule?: string } }>("/api/pharmacy/register", ph("pharmacy.reports"), async (req) => {
@@ -370,10 +379,13 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.post("/api/lab/tests", need("lab.tests"), async (req, reply) => reply.status(201).send(await labCatalog.createTest(db, actorOf(req), req.body)));
   app.put<ById>("/api/lab/tests/:id", need("lab.tests"), async (req) => labCatalog.updateTest(db, actorOf(req), idParam(req.params.id), req.body));
   app.post("/api/lab/tests/starter", need("lab.tests"), async (req) => labCatalog.addStarterTests(db, actorOf(req)));
+  app.post("/api/lab/tests/child-ranges", need("lab.tests"), async (req) => labCatalog.addChildRanges(db, actorOf(req)));
   app.get("/api/lab/requests", need("lab.order"), async () => lab.pendingRequests(db, now()));
-  app.post("/api/lab/orders", need("lab.order"), async (req, reply) =>
-    reply.status(201).send(labChanged(await lab.billOrder(db, actorOf(req), req.body, now(), { allowDiscount: can(req.session!.user.role, "billing.discount") }))),
-  );
+  app.post("/api/lab/orders", need("lab.order"), async (req, reply) => {
+    const order = labChanged(await lab.billOrder(db, actorOf(req), req.body, now(), { allowDiscount: can(req.session!.user.role, "billing.discount") }));
+    if (order.admissionId) realtime.broadcast({ type: "ipd.changed", admissionId: order.admissionId });
+    return reply.status(201).send(order);
+  });
   app.get<{ Querystring: { date?: string } }>("/api/lab/orders", need("lab.read"), async (req) => lab.listOrders(db, dateParam(req.query.date ?? today()), now()));
   app.get<ById>("/api/lab/orders/:id", need("lab.read"), async (req) => lab.getOrder(db, idParam(req.params.id)));
   app.post<ById>("/api/lab/orders/:id/collect", need("lab.collect"), async (req) => labChanged(await lab.collect(db, actorOf(req), idParam(req.params.id), req.body, now())));
@@ -421,10 +433,28 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   });
   app.post("/api/ipd/services", need("ipd.setup"), async (req, reply) => reply.status(201).send(await wards.saveService(db, actorOf(req), null, req.body)));
   app.put<ById>("/api/ipd/services/:id", need("ipd.setup"), async (req) => wards.saveService(db, actorOf(req), idParam(req.params.id), req.body));
+  app.get("/api/ipd/doses", need("ipd.read"), async () => ipd.listWardMeds(db, now()));
+  app.get("/api/ipd/inpatients", async (req) => {
+    allowed(req, "ipd.read", "pharmacy.sell", "lab.order");
+    return ipd.listInpatients(db);
+  });
   app.get<{ Querystring: { status?: string; q?: string } }>("/api/ipd/admissions", need("ipd.read"), async (req) =>
     ipd.listAdmissions(db, { status: req.query.status === "DISCHARGED" ? "DISCHARGED" : "ADMITTED", q: req.query.q, now: now() }),
   );
   app.post("/api/ipd/admissions", need("ipd.admit"), async (req, reply) => reply.status(201).send(ipdChanged(await ipd.admit(db, actorOf(req), req.body, now()))));
+  // Casualty: the desk or the doctor on duty can admit, and either can record the police details.
+  app.post("/api/ipd/emergency", async (req, reply) => {
+    allowed(req, "ipd.admit", "ipd.orders");
+    return reply.status(201).send(ipdChanged(await ipd.admitEmergency(db, actorOf(req), req.body, now())));
+  });
+  app.put<ById>("/api/ipd/admissions/:id/mlc", async (req) => {
+    allowed(req, "ipd.admit", "ipd.orders");
+    return ipdChanged(await ipd.setMlc(db, actorOf(req), idParam(req.params.id), req.body, now()));
+  });
+  app.post<ById>("/api/ipd/admissions/:id/patient", async (req) => {
+    allowed(req, "ipd.admit", "patients.write");
+    return ipdChanged(await ipd.completeAdmittedPatient(db, actorOf(req), idParam(req.params.id), req.body, now()));
+  });
   app.get<ById>("/api/ipd/admissions/:id", need("ipd.read"), async (req) => ipd.getAdmission(db, idParam(req.params.id), now()));
   app.post<ById>("/api/ipd/admissions/:id/transfer", need("ipd.admit"), async (req) => ipdChanged(await ipd.transfer(db, actorOf(req), idParam(req.params.id), req.body, now())));
   app.post<ById>("/api/ipd/admissions/:id/notes", async (req) => {
@@ -440,6 +470,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.post<ById>("/api/ipd/charges/:id/cancel", need("ipd.bill"), async (req) => ipdChanged(await ipd.cancelCharge(db, actorOf(req), idParam(req.params.id), req.body, now())));
   app.post<ById>("/api/ipd/admissions/:id/deposits", need("ipd.bill"), async (req) => ipdChanged(await ipd.addDeposit(db, actorOf(req), idParam(req.params.id), req.body, now())));
   app.put<ById>("/api/ipd/admissions/:id/summary", need("ipd.orders"), async (req) => ipdChanged(await ipd.saveSummary(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/ipd/admissions/:id/summary/amend", need("ipd.orders"), async (req) => ipdChanged(await ipd.amendSummary(db, actorOf(req), idParam(req.params.id), req.body, now())));
   app.post<ById>("/api/ipd/admissions/:id/summary/sign", need("ipd.orders"), async (req) => ipdChanged(await ipd.signSummary(db, actorOf(req), idParam(req.params.id), req.body, now())));
   app.post<ById>("/api/ipd/admissions/:id/discharge", need("ipd.bill"), async (req) =>
     ipdChanged(await ipd.settle(db, actorOf(req), idParam(req.params.id), req.body, now(), { allowDiscount: can(req.session!.user.role, "billing.discount") })),

@@ -1,4 +1,4 @@
-import { QuickRegisterInput, type Patient, type PatientSearchResult } from "@ojas/shared";
+import { EmergencyPatientInput, PatientDetailsInput, QuickRegisterInput, type Patient, type PatientSearchResult } from "@ojas/shared";
 import type { Db, Queryable } from "../../db/index.js";
 import { audit, type Actor } from "../../core/audit.js";
 import { AppError } from "../../core/errors.js";
@@ -71,13 +71,7 @@ export async function quickRegister(db: Db, actor: Actor, input: unknown, force 
   const name = displayName(v.name);
   const key = searchKey(v.name);
 
-  let dob = v.dob ?? null;
-  let estimated = false;
-  if (!dob && v.ageYears !== undefined) {
-    const now = new Date();
-    dob = localDate(new Date(now.getFullYear() - v.ageYears, now.getMonth(), now.getDate()));
-    estimated = true;
-  }
+  const { dob, estimated } = dobOf(v);
 
   return db.tx(async (q) => {
     if (!force) {
@@ -89,15 +83,61 @@ export async function quickRegister(db: Db, actor: Actor, input: unknown, force 
         throw new AppError(409, "possible_duplicate", `${name} is already registered with this phone number`, { existing: toPatient(dup.rows[0]) });
       }
     }
-    const facility = await q.query<{ uhid_prefix: string }>("select uhid_prefix from core.facility where id = 1");
-    const id = uuidv7();
-    const uhid = await nextUhid(q, facility.rows[0]?.uhid_prefix ?? "OJ-");
-    await q.query(
-      `insert into core.patient (id, uhid, name, name_search, sex, phone, dob, dob_estimated, created_by, updated_by)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`,
-      [id, uhid, name, key, v.sex, v.phone, dob, estimated, actor.user],
-    );
-    await audit(q, actor, "patient.register", "patient", id, { uhid, name, phone: v.phone });
-    return getPatient(q, id);
+    return insertPatient(q, actor, { name, sex: v.sex, phone: v.phone, dob, estimated, pending: false });
   });
+}
+
+/** Age in years → an estimated date of birth; a typed date of birth wins. */
+function dobOf(v: { ageYears?: number; dob?: string }, now = new Date()): { dob: string | null; estimated: boolean } {
+  if (v.dob) return { dob: v.dob, estimated: false };
+  if (v.ageYears === undefined) return { dob: null, estimated: false };
+  return { dob: localDate(new Date(now.getFullYear() - v.ageYears, now.getMonth(), now.getDate())), estimated: true };
+}
+
+async function insertPatient(
+  q: Queryable, actor: Actor,
+  p: { name: string; sex: Patient["sex"]; phone: string; dob: string | null; estimated: boolean; pending: boolean },
+): Promise<Patient> {
+  const facility = await q.query<{ uhid_prefix: string }>("select uhid_prefix from core.facility where id = 1");
+  const id = uuidv7();
+  const uhid = await nextUhid(q, facility.rows[0]?.uhid_prefix ?? "OJ-");
+  await q.query(
+    `insert into core.patient (id, uhid, name, name_search, sex, phone, dob, dob_estimated, details_pending, created_by, updated_by)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`,
+    [id, uhid, p.name, searchKey(p.name), p.sex, p.phone, p.dob, p.estimated, p.pending, actor.user],
+  );
+  await audit(q, actor, p.pending ? "patient.register_emergency" : "patient.register", "patient", id, { uhid, name: p.name, phone: p.phone });
+  return getPatient(q, id);
+}
+
+const UNKNOWN: Record<Patient["sex"], string> = { M: "Unknown man", F: "Unknown woman", O: "Unknown person" };
+
+/**
+ * Registers a casualty patient inside the admitting transaction. Nothing but the sex is required; a
+ * patient with no name, phone or age is flagged so the desk completes them later. No duplicate check:
+ * in an emergency the patient is treated first.
+ */
+export async function registerEmergencyPatient(q: Queryable, actor: Actor, input: unknown, now = new Date()): Promise<Patient> {
+  const v = EmergencyPatientInput.parse(input);
+  const { dob, estimated } = dobOf(v, now);
+  const name = v.name.length >= 2 ? displayName(v.name) : UNKNOWN[v.sex];
+  const pending = v.name.length < 2 || !v.phone || dob === null;
+  return insertPatient(q, actor, { name, sex: v.sex, phone: v.phone, dob, estimated, pending });
+}
+
+/** Completes a patient registered in a hurry. A fully registered patient's details are left alone. */
+export async function completePatient(q: Queryable, actor: Actor, id: string, input: unknown, now = new Date()): Promise<Patient> {
+  const v = PatientDetailsInput.parse(input);
+  const p = (await q.query<{ details_pending: boolean; name: string }>("select details_pending, name from core.patient where id = $1 and deleted_at is null for update", [id])).rows[0];
+  if (!p) throw new AppError(404, "patient_not_found", "Patient not found");
+  if (!p.details_pending) throw new AppError(409, "details_complete", `${p.name}'s registration is already complete`);
+  const { dob, estimated } = dobOf(v, now);
+  const name = displayName(v.name);
+  await q.query(
+    `update core.patient set name = $2, name_search = $3, sex = $4, phone = $5, dob = $6, dob_estimated = $7, details_pending = false,
+            updated_by = $8, updated_at = now(), row_version = row_version + 1 where id = $1`,
+    [id, name, searchKey(v.name), v.sex, v.phone, dob, estimated, actor.user],
+  );
+  await audit(q, actor, "patient.complete", "patient", id, { was: p.name, name, phone: v.phone });
+  return getPatient(q, id);
 }

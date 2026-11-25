@@ -204,9 +204,15 @@ export const SaleInput = z.object({
   lines: z.array(SaleLineInput).min(1, "Add at least one medicine").max(100),
   discount: Paise.default(0),
   paymentMode: PaymentMode,
+  /** Charge to this in-patient's bill instead of taking payment now (paymentMode is then ignored). */
+  admissionId: z.uuid().optional(),
   idempotencyKey: z.uuid(),
 });
 export type SaleInput = z.input<typeof SaleInput>;
+
+/** How a counter bill was paid: at the counter, or put on the in-patient bill. */
+export type CounterMode = z.infer<typeof PaymentMode> | "IPD";
+export const COUNTER_MODE_LABEL: Record<CounterMode, string> = { CASH: "Cash", UPI: "UPI", CARD: "Card", IPD: "IP bill" };
 
 export interface PharmacyBillLine {
   itemName: string;
@@ -236,7 +242,10 @@ export interface PharmacyBill {
   discount: Paise;
   total: Paise;
   gst: GstSlab[];
-  paymentMode: z.infer<typeof PaymentMode>;
+  /** "IPD": charged to the in-patient bill, settled at discharge. */
+  paymentMode: CounterMode;
+  admissionId: string | null;
+  admissionNo: string | null;
   soldBy: string;
   facility: { name: string; address: string; phone: string; gstin: string; drugLicence: string };
 }
@@ -275,7 +284,7 @@ export interface SaleSummary {
   issuedAt: string;
   customerName: string;
   total: Paise;
-  paymentMode: z.infer<typeof PaymentMode>;
+  paymentMode: CounterMode;
   items: number;
 }
 

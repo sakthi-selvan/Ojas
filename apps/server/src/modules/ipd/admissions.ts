@@ -6,16 +6,18 @@
  * Once discharged, an admission is read-only.
  */
 import {
-  AdmitInput, CancelChargeInput, ChargeInput, DepositInput, DoseInput, MedOrderInput, NoteInput, SettleInput, StopMedInput, SummaryInput, TransferInput,
-  VITAL_KEYS, VitalsInput, midnightsBetween,
-  type Admission, type AdmissionSummary, type BedStay, type BillLine, type Charge, type ChartNote, type DischargeSummary, type DoseEntry, type IpdBill,
+  AdmitInput, AmendSummaryInput, EmergencyAdmitInput, MlcInput, CancelChargeInput, ChargeInput, DepositInput, DoseInput, MedOrderInput, NoteInput, SettleInput, StopMedInput, SummaryInput, TransferInput,
+  VITAL_KEYS, VitalsInput, formatINR, midnightsBetween, roomGstBp, roomTax, taxOf,
+  type Admission, type AdmissionSummary, type BedStay, type BillLine, type Charge, type ChartNote, type DischargeSummary, type DoseEntry, type Inpatient, type SummaryAmendment, type WardMeds, type IpdBill,
   type IpdPayment, type IpdPaymentKind, type MedOrder, type NoteKind, type Vitals, type VitalsEntry,
 } from "@ojas/shared";
+import type { z } from "zod";
 import type { Db, Queryable } from "../../db/index.js";
 import { audit, type Actor } from "../../core/audit.js";
 import { AppError, isUniqueViolation } from "../../core/errors.js";
 import { uuidv7 } from "../../core/ids.js";
 import { financialYear, nextNumber } from "../../core/numbering.js";
+import { completePatient, registerEmergencyPatient } from "../front-desk/patients.js";
 
 const nameOf = (col: string) => `coalesce((select u.display_name from core.app_user u where u.username = ${col}), ${col})`;
 
@@ -49,10 +51,10 @@ const seq = async (q: Queryable, prefix: string, now: Date) => {
 
 // ───────────────────────── The bill ─────────────────────────
 
-interface StayRow { bed_id: string; ward_name: string; ward_kind: BedStay["wardKind"]; bed_label: string; bed_charge: number; nursing_charge: number; from_at: string; to_at: string | null; reason: string }
+interface StayRow { bed_id: string; ward_name: string; ward_kind: BedStay["wardKind"]; bed_label: string; bed_charge: number; nursing_charge: number; gst_bp: number; from_at: string; to_at: string | null; reason: string }
 
 /** Room and nursing by the midnight census, then the itemised charges; payments less refunds. */
-export function computeBill(admittedAt: Date, end: Date, stays: StayRow[], charges: Charge[], payments: IpdPayment[], discount: number): IpdBill {
+export function computeBill(admittedAt: Date, end: Date, stays: StayRow[], charges: Charge[], payments: IpdPayment[], discount: number, counter: BillLine[] = []): IpdBill {
   const nights = new Map<number, number>();
   const mids = midnightsBetween(admittedAt, end);
   if (!mids.length) nights.set(stays.length - 1, 1);
@@ -63,19 +65,95 @@ export function computeBill(admittedAt: Date, end: Date, stays: StayRow[], charg
     nights.set(i, (nights.get(i) ?? 0) + 1);
   }
   const lines: BillLine[] = [];
+  const taxed: { stay: StayRow; rent: number; nights: number }[] = [];
   for (const [i, s] of stays.entries()) {
     const n = nights.get(i);
     if (!n) continue;
+    if (s.gst_bp > 0 && s.bed_charge > 0) taxed.push({ stay: s, rent: n * s.bed_charge, nights: n });
     if (s.bed_charge > 0) lines.push({ category: "BED", description: `${s.ward_name} · bed ${s.bed_label}`, quantity: n, unitPrice: s.bed_charge, amount: n * s.bed_charge });
     if (s.nursing_charge > 0) lines.push({ category: "NURSING", description: `Nursing · ${s.ward_name}`, quantity: n, unitPrice: s.nursing_charge, amount: n * s.nursing_charge });
   }
   for (const c of charges) {
     if (!c.cancelledAt) lines.push({ category: c.category, description: c.description, quantity: c.quantity, unitPrice: c.unitPrice, amount: c.amount });
   }
+  lines.push(...counter);
   const subtotal = lines.reduce((s, l) => s + l.amount, 0);
   const paid = payments.reduce((s, p) => s + (p.kind === "REFUND" ? -p.amount : p.amount), 0);
-  const total = subtotal - discount;
-  return { days: Math.max(1, mids.length), lines, subtotal, discount, total, paid, balance: total - paid };
+  const taxLines = roomTax(taxed.map(({ stay: s, rent, nights: n }) => ({
+    description: `Room rent: ${s.ward_name} bed ${s.bed_label}, ${n} day${n === 1 ? "" : "s"} at ${formatINR(s.bed_charge)}`, rent, bp: s.gst_bp,
+  })), subtotal, discount);
+  const tax = taxOf(taxLines);
+  const total = subtotal - discount + tax;
+  return { days: Math.max(1, mids.length), lines, subtotal, discount, taxLines, tax, total, paid, balance: total - paid };
+}
+
+/** Pharmacy and lab bills put on this admission at their counters. */
+async function counterLines(q: Queryable, admissionId: string): Promise<BillLine[]> {
+  const ph = (await q.query<{ bill_no: string; total: number; items: number }>(
+    `select s.bill_no, s.total, (select count(*)::int from pharmacy.sale_line l where l.sale_id = s.id) as items
+       from pharmacy.sale s where s.admission_id = $1 order by s.issued_at`, [admissionId],
+  )).rows.map((s): BillLine => ({ category: "MEDICINE", description: `Pharmacy bill ${s.bill_no} (${s.items} item${s.items === 1 ? "" : "s"})`, quantity: 1, unitPrice: s.total, amount: s.total }));
+  const lab = (await q.query<{ order_no: string; total: number; codes: string }>(
+    `select o.order_no, o.total, (select string_agg(t.code, ', ' order by t.line_no) from lab.order_test t where t.order_id = o.id) as codes
+       from lab.lab_order o where o.admission_id = $1 order by o.ordered_at`, [admissionId],
+  )).rows.map((o): BillLine => ({ category: "INVESTIGATION", description: `Lab ${o.order_no}: ${o.codes}`, quantity: 1, unitPrice: o.total, amount: o.total }));
+  return [...ph, ...lab];
+}
+
+/**
+ * Checks a counter bill (pharmacy, lab) can go on this admission, and locks the admission so the
+ * bill can't be settled while the counter bill is being written.
+ */
+export async function chargeTo(q: Queryable, admissionId: string, patientId: string | undefined): Promise<{ admissionNo: string; doctorName: string }> {
+  const a = (await q.query<{ status: string; patient_id: string; admission_no: string; doctor_name: string }>(
+    `select a.status, a.patient_id, a.admission_no, d.name as doctor_name
+       from ipd.admission a join core.practitioner d on d.id = a.practitioner_id where a.id = $1 for update of a`, [admissionId],
+  )).rows[0];
+  if (!a) throw new AppError(422, "admission_not_found", "That admission was not found", { fields: { admissionId: "Choose again" } });
+  if (a.status !== "ADMITTED") throw new AppError(409, "already_discharged", `${a.admission_no} has been discharged; take payment at the counter instead`);
+  if (patientId && patientId !== a.patient_id) throw new AppError(422, "wrong_patient", "That admission is for a different patient");
+  return { admissionNo: a.admission_no, doctorName: a.doctor_name };
+}
+
+/** Everyone in a bed now, for the pharmacy and lab counters. */
+export async function listInpatients(q: Queryable): Promise<Inpatient[]> {
+  const { rows } = await q.query<{ id: string; admission_no: string; p_id: string; uhid: string; p_name: string; sex: Inpatient["patient"]["sex"]; dob: string | null; phone: string; ward_name: string; bed_label: string; doctor_name: string }>(
+    `select a.id, a.admission_no, p.id as p_id, p.uhid, p.name as p_name, p.sex, p.dob, p.phone, w.name as ward_name, b.label as bed_label, d.name as doctor_name
+       from ipd.admission a join core.patient p on p.id = a.patient_id join ipd.bed b on b.id = a.bed_id join ipd.ward w on w.id = b.ward_id
+       join core.practitioner d on d.id = a.practitioner_id
+      where a.status = 'ADMITTED' order by w.name, b.sort_no`,
+  );
+  return rows.map((r) => ({
+    admissionId: r.id, admissionNo: r.admission_no, patient: { id: r.p_id, uhid: r.uhid, name: r.p_name, sex: r.sex, dob: r.dob, phone: r.phone },
+    wardName: r.ward_name, bedLabel: r.bed_label, doctorName: r.doctor_name,
+  }));
+}
+
+/**
+ * Every admitted patient's medicines still running, with the last two days of doses: enough for the
+ * ward's dose round to work out what is due now and what was missed.
+ */
+export async function listWardMeds(q: Queryable, now = new Date()): Promise<WardMeds[]> {
+  const patients = await listInpatients(q);
+  if (!patients.length) return [];
+  const ids = patients.map((p) => p.admissionId);
+  const meds = (await q.query<{ id: string; admission_id: string; med: MedOrder["med"]; started_at: string; started_by: string }>(
+    `select m.id, m.admission_id, m.med, m.started_at, ${nameOf("m.started_by")} as started_by
+       from ipd.med_order m where m.admission_id = any($1) and m.stopped_at is null order by m.started_at, m.id`, [ids],
+  )).rows;
+  const doses = (await q.query<{ id: string; med_order_id: string; status: DoseEntry["status"]; note: string; at: string; by_name: string }>(
+    `select d.id, d.med_order_id, d.status, d.note, d.at, ${nameOf("d.by_user")} as by_name
+       from ipd.med_dose d join ipd.med_order m on m.id = d.med_order_id
+      where m.admission_id = any($1) and m.stopped_at is null and d.at > $2
+      order by d.at desc, d.id desc`, [ids, new Date(now.getTime() - 2 * 86_400_000).toISOString()],
+  )).rows;
+  return patients.map((p) => ({
+    ...p,
+    meds: meds.filter((m) => m.admission_id === p.admissionId).map((m): MedOrder => ({
+      id: m.id, med: m.med, startedAt: m.started_at, startedBy: m.started_by, stoppedAt: null, stoppedBy: null, stopReason: "",
+      doses: doses.filter((d) => d.med_order_id === m.id).map((d) => ({ id: d.id, status: d.status, note: d.note, at: d.at, by: d.by_name })),
+    })),
+  }));
 }
 
 // ───────────────────────── Reading ─────────────────────────
@@ -84,14 +162,15 @@ interface AdmissionRow {
   id: string; admission_no: string; status: Admission["status"]; admitted_at: string; admitted_by: string; discharged_at: string | null; reason: string;
   attendant_name: string; attendant_relation: string; attendant_phone: string; summary: DischargeSummary | null; summary_version: number;
   summary_signed_at: string | null; signed_by_name: string | null; discharge_type: AdmissionSummary["dischargeType"]; discount: number; final_bill_no: string | null;
-  p_id: string; uhid: string; p_name: string; sex: Admission["patient"]["sex"]; dob: string | null; phone: string;
+  p_id: string; uhid: string; p_name: string; sex: Admission["patient"]["sex"]; dob: string | null; phone: string; details_pending: boolean;
+  emergency: boolean; mlc: boolean; mlc_no: string; police_station: string; brought_by: string;
   d_id: string; d_name: string; department: string; qualification: string; registration_no: string;
   bed_id: string; bed_label: string; ward_id: string; ward_name: string; ward_kind: BedStay["wardKind"];
 }
 
 const ADMISSION_SELECT = `
   select a.*, ${nameOf("a.created_by")} as admitted_by, ${nameOf("a.summary_signed_by")} as signed_by_name,
-         p.id as p_id, p.uhid, p.name as p_name, p.sex, p.dob, p.phone,
+         p.id as p_id, p.uhid, p.name as p_name, p.sex, p.dob, p.phone, p.details_pending,
          d.id as d_id, d.name as d_name, d.department, d.qualification, d.registration_no,
          b.label as bed_label, w.id as ward_id, w.name as ward_name, w.kind as ward_kind
     from ipd.admission a
@@ -132,6 +211,10 @@ export async function getAdmission(q: Queryable, id: string, now = new Date()): 
     `select p.*, ${nameOf("p.received_by")} as by_name from ipd.payment p where p.admission_id = $1 order by p.received_at, p.receipt_no`, [id],
   )).rows.map((p): IpdPayment => ({ id: p.id, receiptNo: p.receipt_no, kind: p.kind, amount: p.amount, mode: p.mode, at: p.received_at, by: p.by_name }));
   const facility = (await q.query<Admission["facility"]>("select name, address, phone, email, gstin from core.facility where id = 1")).rows[0]!;
+  const counter = await counterLines(q, id);
+  const amendments = (await q.query<{ version: number; amended_at: string; by_name: string; reason: string }>(
+    `select s.version, s.amended_at, ${nameOf("s.amended_by")} as by_name, s.reason from ipd.summary_amendment s where s.admission_id = $1 order by s.version`, [id],
+  )).rows.map((s): SummaryAmendment => ({ version: s.version, at: s.amended_at, by: s.by_name, reason: s.reason }));
   const end = a.discharged_at ? new Date(a.discharged_at) : now;
   return {
     id: a.id, admissionNo: a.admission_no, status: a.status, admittedAt: a.admitted_at, admittedBy: a.admitted_by, dischargedAt: a.discharged_at,
@@ -139,14 +222,18 @@ export async function getAdmission(q: Queryable, id: string, now = new Date()): 
     doctor: { id: a.d_id, name: a.d_name, department: a.department, qualification: a.qualification, registrationNo: a.registration_no },
     reason: a.reason,
     attendant: { name: a.attendant_name, relation: a.attendant_relation, phone: a.attendant_phone },
+    emergency: a.emergency,
+    mlc: a.mlc ? { no: a.mlc_no, policeStation: a.police_station, broughtBy: a.brought_by } : null,
+    detailsPending: a.details_pending,
     bed: a.status === "ADMITTED" ? { id: a.bed_id, label: a.bed_label, wardId: a.ward_id, wardName: a.ward_name, wardKind: a.ward_kind } : null,
     stays: stays.map((s) => ({
       wardName: s.ward_name, wardKind: s.ward_kind, bedLabel: s.bed_label, bedCharge: s.bed_charge, nursingCharge: s.nursing_charge, from: s.from_at, to: s.to_at, reason: s.reason,
     })),
     notes, vitals, meds, charges, payments,
     summary: a.summary, summaryVersion: a.summary_version, summarySignedAt: a.summary_signed_at, summarySignedBy: a.summary_signed_at ? a.signed_by_name : null,
+    amendments,
     finalBillNo: a.final_bill_no,
-    bill: computeBill(new Date(a.admitted_at), end, stays, charges, payments, a.discount),
+    bill: computeBill(new Date(a.admitted_at), end, stays, charges, payments, a.discount, counter),
     facility,
   };
 }
@@ -168,6 +255,7 @@ export async function listAdmissions(q: Queryable, opts: { status: "ADMITTED" | 
     id: a.id, admissionNo: a.admission_no, status: a.status, admittedAt: a.admitted_at, dischargedAt: a.discharged_at,
     patient: { id: a.p_id, uhid: a.uhid, name: a.p_name, sex: a.sex, dob: a.dob, phone: a.phone },
     doctorName: a.d_name, wardName: a.ward_name, bedLabel: a.bed_label, dischargeType: a.discharge_type, dischargeAdvised: !!a.summary_signed_at,
+    emergency: a.emergency, mlc: a.mlc,
   }));
 }
 
@@ -206,41 +294,95 @@ const bedTaken = (e: unknown): never => {
 export async function admit(db: Db, actor: Actor, raw: unknown, now = new Date()): Promise<Admission> {
   const v = AdmitInput.parse(raw);
   try {
+    return await once(db, v.idempotencyKey, (q) => admitIn(q, actor, { ...v, emergency: false, mlc: false, mlcNo: "", policeStation: "", broughtBy: "" }, now));
+  } catch (e) {
+    return bedTaken(e);
+  }
+}
+
+/**
+ * Casualty: registers the patient at the door if they are new (or unknown), and admits them straight
+ * to a bed with no advance. Medico-legal details can be given now or later.
+ */
+export async function admitEmergency(db: Db, actor: Actor, raw: unknown, now = new Date()): Promise<Admission> {
+  const v = EmergencyAdmitInput.parse(raw);
+  try {
     return await once(db, v.idempotencyKey, async (q) => {
-      if (!(await q.query("select 1 from core.patient where id = $1 and deleted_at is null", [v.patientId])).rows[0]) {
-        throw new AppError(422, "patient_not_found", "Patient not found", { fields: { patientId: "Choose the patient" } });
-      }
-      const already = (await q.query<{ admission_no: string; ward_name: string; label: string }>(
-        `select a.admission_no, w.name as ward_name, b.label from ipd.admission a join ipd.bed b on b.id = a.bed_id join ipd.ward w on w.id = b.ward_id
-          where a.patient_id = $1 and a.status = 'ADMITTED'`, [v.patientId],
-      )).rows[0];
-      if (already) throw new AppError(409, "already_admitted", `Already admitted (${already.admission_no}, ${already.ward_name} bed ${already.label})`);
-      if (!(await q.query("select 1 from core.practitioner where id = $1 and active", [v.practitionerId])).rows[0]) {
-        throw new AppError(422, "doctor_not_found", "Choose the admitting doctor", { fields: { practitionerId: "Choose the doctor" } });
-      }
-      const bed = await freeBed(q, v.bedId);
-      const id = uuidv7();
-      const admissionNo = await seq(q, "IP", now);
-      await q.query(
-        `insert into ipd.admission (id, admission_no, patient_id, practitioner_id, bed_id, admitted_at, reason, attendant_name, attendant_relation, attendant_phone, created_by, updated_by)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)`,
-        [id, admissionNo, v.patientId, v.practitionerId, v.bedId, now.toISOString(), v.reason, v.attendantName, v.attendantRelation, v.attendantPhone, actor.user],
-      );
-      await q.query(
-        `insert into ipd.bed_stay (id, admission_id, bed_id, ward_name, ward_kind, bed_label, bed_charge, nursing_charge, from_at, reason)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'Admitted')`,
-        [uuidv7(), id, v.bedId, bed.ward_name, bed.ward_kind, bed.label, bed.bed_charge, bed.nursing_charge, now.toISOString()],
-      );
-      let receipt: string | undefined;
-      if (v.deposit > 0) receipt = await pay(q, actor, id, "DEPOSIT", v.deposit, v.paymentMode, now);
-      await audit(q, actor, "ipd.admit", "admission", id, {
-        admissionNo, patient: v.patientId, doctor: v.practitionerId, bed: `${bed.ward_name} ${bed.label}`, deposit: v.deposit, receipt,
-      });
-      return getAdmission(q, id, now);
+      const patientId = v.patientId ?? (await registerEmergencyPatient(q, actor, v.newPatient, now)).id;
+      return admitIn(q, actor, { ...v, patientId, deposit: 0, paymentMode: "CASH", emergency: true }, now);
     });
   } catch (e) {
     return bedTaken(e);
   }
+}
+
+type AdmitFields = Omit<z.output<typeof AdmitInput>, "idempotencyKey"> & z.output<typeof MlcInput> & { emergency: boolean };
+
+async function admitIn(q: Queryable, actor: Actor, v: AdmitFields, now: Date): Promise<Admission> {
+  if (!(await q.query("select 1 from core.patient where id = $1 and deleted_at is null", [v.patientId])).rows[0]) {
+    throw new AppError(422, "patient_not_found", "Patient not found", { fields: { patientId: "Choose the patient" } });
+  }
+  const already = (await q.query<{ admission_no: string; ward_name: string; label: string }>(
+    `select a.admission_no, w.name as ward_name, b.label from ipd.admission a join ipd.bed b on b.id = a.bed_id join ipd.ward w on w.id = b.ward_id
+      where a.patient_id = $1 and a.status = 'ADMITTED'`, [v.patientId],
+  )).rows[0];
+  if (already) throw new AppError(409, "already_admitted", `Already admitted (${already.admission_no}, ${already.ward_name} bed ${already.label})`);
+  if (!(await q.query("select 1 from core.practitioner where id = $1 and active", [v.practitionerId])).rows[0]) {
+    throw new AppError(422, "doctor_not_found", "Choose the admitting doctor", { fields: { practitionerId: "Choose the doctor" } });
+  }
+  const bed = await freeBed(q, v.bedId);
+  const id = uuidv7();
+  const admissionNo = await seq(q, "IP", now);
+  await q.query(
+    `insert into ipd.admission (id, admission_no, patient_id, practitioner_id, bed_id, admitted_at, reason, attendant_name, attendant_relation, attendant_phone,
+                                emergency, mlc, mlc_no, police_station, brought_by, created_by, updated_by)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)`,
+    [id, admissionNo, v.patientId, v.practitionerId, v.bedId, now.toISOString(), v.reason, v.attendantName, v.attendantRelation, v.attendantPhone,
+      v.emergency, v.mlc, v.mlc ? v.mlcNo : "", v.mlc ? v.policeStation : "", v.broughtBy, actor.user],
+  );
+  await q.query(
+    `insert into ipd.bed_stay (id, admission_id, bed_id, ward_name, ward_kind, bed_label, bed_charge, nursing_charge, gst_bp, from_at, reason)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Admitted')`,
+    [uuidv7(), id, v.bedId, bed.ward_name, bed.ward_kind, bed.label, bed.bed_charge, bed.nursing_charge, await stayGst(q, bed), now.toISOString()],
+  );
+  let receipt: string | undefined;
+  if (v.deposit > 0) receipt = await pay(q, actor, id, "DEPOSIT", v.deposit, v.paymentMode, now);
+  await audit(q, actor, v.emergency ? "ipd.admit_emergency" : "ipd.admit", "admission", id, {
+    admissionNo, patient: v.patientId, doctor: v.practitionerId, bed: `${bed.ward_name} ${bed.label}`, deposit: v.deposit, receipt,
+    ...(v.mlc ? { mlc: true, mlcNo: v.mlcNo } : {}),
+  });
+  return getAdmission(q, id, now);
+}
+
+/** Records or corrects the medico-legal details; the police number often arrives after admission or even discharge. */
+export async function setMlc(db: Db, actor: Actor, id: string, raw: unknown, now = new Date()): Promise<Admission> {
+  const v = MlcInput.parse(raw);
+  return db.tx(async (q) => {
+    const a = (await q.query<{ id: string }>("select id from ipd.admission where id = $1 for update", [id])).rows[0];
+    if (!a) throw new AppError(404, "admission_not_found", "Admission not found");
+    await q.query(
+      `update ipd.admission set mlc = $2, mlc_no = $3, police_station = $4, brought_by = $5, updated_by = $6, updated_at = now(), row_version = row_version + 1 where id = $1`,
+      [id, v.mlc, v.mlc ? v.mlcNo : "", v.mlc ? v.policeStation : "", v.broughtBy, actor.user],
+    );
+    await audit(q, actor, "ipd.mlc", "admission", id, v);
+    return getAdmission(q, id, now);
+  });
+}
+
+/** Completes the registration of a patient admitted through casualty in a hurry. */
+export async function completeAdmittedPatient(db: Db, actor: Actor, id: string, raw: unknown, now = new Date()): Promise<Admission> {
+  return db.tx(async (q) => {
+    const a = (await q.query<{ patient_id: string }>("select patient_id from ipd.admission where id = $1 for update", [id])).rows[0];
+    if (!a) throw new AppError(404, "admission_not_found", "Admission not found");
+    await completePatient(q, actor, a.patient_id, raw, now);
+    return getAdmission(q, id, now);
+  });
+}
+
+/** The GST rate (basis points) for a stay starting now in this bed, under the hospital's current rule. */
+async function stayGst(q: Queryable, bed: { ward_kind: BedStay["wardKind"]; bed_charge: number }): Promise<number> {
+  const f = (await q.query<{ room_gst_bp: number; room_gst_above: number }>("select room_gst_bp, room_gst_above from core.facility where id = 1")).rows[0];
+  return f ? roomGstBp(bed.ward_kind, Number(bed.bed_charge), { bp: f.room_gst_bp, above: Number(f.room_gst_above) }) : 0;
 }
 
 async function pay(q: Queryable, actor: Actor, admissionId: string, kind: IpdPaymentKind, amount: number, mode: string, now: Date): Promise<string> {
@@ -261,9 +403,9 @@ export async function transfer(db: Db, actor: Actor, id: string, raw: unknown, n
       const bed = await freeBed(q, v.bedId);
       await q.query("update ipd.bed_stay set to_at = $2 where admission_id = $1 and to_at is null", [id, now.toISOString()]);
       await q.query(
-        `insert into ipd.bed_stay (id, admission_id, bed_id, ward_name, ward_kind, bed_label, bed_charge, nursing_charge, from_at, reason)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [uuidv7(), id, v.bedId, bed.ward_name, bed.ward_kind, bed.label, bed.bed_charge, bed.nursing_charge, now.toISOString(), v.reason],
+        `insert into ipd.bed_stay (id, admission_id, bed_id, ward_name, ward_kind, bed_label, bed_charge, nursing_charge, gst_bp, from_at, reason)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [uuidv7(), id, v.bedId, bed.ward_name, bed.ward_kind, bed.label, bed.bed_charge, bed.nursing_charge, await stayGst(q, bed), now.toISOString(), v.reason],
       );
       await q.query("update ipd.admission set bed_id = $2, updated_by = $3, updated_at = now(), row_version = row_version + 1 where id = $1", [id, v.bedId, actor.user]);
       await q.query("update ipd.bed set needs_cleaning = true where id = $1", [a.bed_id]);
@@ -430,6 +572,41 @@ export async function signSummary(db: Db, actor: Actor, id: string, raw: unknown
 }
 
 /**
+ * Corrects a discharge summary after discharge (a wrong diagnosis code, a missed medicine). The
+ * version it replaces is kept with the reason, and the doctor making the correction signs it.
+ */
+export async function amendSummary(db: Db, actor: Actor, id: string, raw: unknown, now = new Date()): Promise<Admission> {
+  const v = AmendSummaryInput.parse(raw);
+  return db.tx(async (q) => {
+    const a = (await q.query<{ status: string; summary: DischargeSummary | null; summary_version: number }>(
+      "select status, summary, summary_version from ipd.admission where id = $1 for update", [id],
+    )).rows[0];
+    if (!a) throw new AppError(404, "admission_not_found", "Admission not found");
+    if (a.status !== "DISCHARGED" || !a.summary) {
+      throw new AppError(409, "not_discharged", "Before discharge, edit the summary directly; amendments are for signed summaries after discharge");
+    }
+    if (v.summaryVersion !== a.summary_version) throw new AppError(409, "changed_elsewhere", "Someone else changed this summary. Reload to see their changes.");
+    const { summaryVersion: _, reason, ...rest } = v;
+    const summary: DischargeSummary = { ...rest, followUpDate: v.followUpDate ?? null, medications: v.medications.map((m) => ({ ...m, durationDays: m.durationDays ?? null })) };
+    const missing: Record<string, string> = {};
+    if (!summary.diagnoses.length) missing.diagnoses = "Add the final diagnosis";
+    if (summary.dischargeType !== "DEATH" && !summary.conditionAtDischarge) missing.conditionAtDischarge = "Describe the condition at discharge";
+    if (Object.keys(missing).length) throw new AppError(422, "summary_incomplete", Object.values(missing)[0]!, { fields: missing });
+    await q.query(
+      "insert into ipd.summary_amendment (id, admission_id, version, previous, reason, amended_at, amended_by) values ($1,$2,$3,$4::jsonb,$5,$6,$7)",
+      [uuidv7(), id, a.summary_version + 1, JSON.stringify(a.summary), reason, now.toISOString(), actor.user],
+    );
+    await q.query(
+      `update ipd.admission set summary = $2::jsonb, summary_version = summary_version + 1, summary_signed_at = $3, summary_signed_by = $4,
+              discharge_type = $5, updated_by = $4, updated_at = now(), row_version = row_version + 1 where id = $1`,
+      [id, JSON.stringify(summary), now.toISOString(), actor.user, summary.dischargeType],
+    );
+    await audit(q, actor, "ipd.summary.amend", "admission", id, { version: a.summary_version + 1, reason });
+    return getAdmission(q, id, now);
+  });
+}
+
+/**
  * Settles the final bill and discharges: the balance is collected (or the extra deposit refunded),
  * the bill is numbered, and the bed goes for cleaning.
  */
@@ -448,7 +625,8 @@ export async function settle(db: Db, actor: Actor, id: string, raw: unknown, now
       throw new AppError(409, "bill_changed", "The bill changed while you were looking at it (a charge was added or the day turned). Check the new total.");
     }
     if (v.discount > bill.subtotal) throw new AppError(422, "discount_too_large", "Discount can't be more than the bill", { fields: { discount: "More than the bill" } });
-    const balance = bill.subtotal - v.discount - bill.paid;
+    const tax = taxOf(roomTax(bill.taxLines, bill.subtotal, v.discount));
+    const balance = bill.subtotal - v.discount + tax - bill.paid;
     let receipt: string | undefined;
     if (balance > 0) receipt = await pay(q, actor, id, "FINAL", balance, v.paymentMode, now);
     if (balance < 0) receipt = await pay(q, actor, id, "REFUND", -balance, v.paymentMode, now);
@@ -461,7 +639,7 @@ export async function settle(db: Db, actor: Actor, id: string, raw: unknown, now
     );
     await q.query("update ipd.bed set needs_cleaning = true where id = $1", [a.bed_id]);
     await audit(q, actor, "ipd.discharge", "admission", id, {
-      billNo, subtotal: bill.subtotal, discount: v.discount, paid: bill.paid, balance, receipt, mode: v.paymentMode, type: a.summary.dischargeType,
+      billNo, subtotal: bill.subtotal, discount: v.discount, tax, paid: bill.paid, balance, receipt, mode: v.paymentMode, type: a.summary.dischargeType,
     });
     return getAdmission(q, id, now);
   });

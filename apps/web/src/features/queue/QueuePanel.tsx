@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AppointmentStatus, QueueItem } from "@ojas/shared";
+import type { AppointmentStatus, QueueItem, Receipt } from "@ojas/shared";
 import { api, timeLabel, today } from "../../lib/api";
 import { Activity } from "lucide-react";
 import { Alert, Badge, Button, Card, cx } from "../../components/ui";
 import { VitalsDialog } from "../consult/VitalsDialog";
 import { useAuth } from "../../lib/auth";
+import { CancelBillDialog, useRefundVoucher } from "../front-desk/CancelBill";
 
 export const statusMeta: Record<AppointmentStatus, { label: string; tone: "neutral" | "ok" | "warn" | "danger" | "accent" }> = {
   BOOKED: { label: "Booked", tone: "neutral" },
@@ -28,6 +29,7 @@ export function useQueue(date = today()) {
 /** Today's live queue beside the front desk. It updates instantly when any desk books or any doctor calls a patient. */
 export function QueuePanel() {
   const queue = useQueue();
+  const voucher = useRefundVoucher();
   const [doctor, setDoctor] = useState<string>("all");
   const items = queue.data ?? [];
   const doctors = useMemo(() => [...new Map(items.map((i) => [i.practitionerId, i.practitionerName])).entries()], [items]);
@@ -56,16 +58,17 @@ export function QueuePanel() {
           ))}
         </div>
       )}
+      {voucher.view}
       {queue.error && <div className="p-3"><Alert tone="danger">{(queue.error as Error).message}</Alert></div>}
       <ol className="flex-1 overflow-y-auto p-2" aria-label="Appointments">
         {shown.length === 0 && <li className="p-6 text-center text-sm text-ink-3">No appointments yet today.</li>}
-        {shown.map((i) => <QueueRow key={i.appointmentId} item={i} />)}
+        {shown.map((i) => <QueueRow key={i.appointmentId} item={i} onRefunded={voucher.print} />)}
       </ol>
     </Card>
   );
 }
 
-export function QueueRow({ item }: { item: QueueItem }) {
+export function QueueRow({ item, onRefunded }: { item: QueueItem; onRefunded?: (r: Receipt) => void }) {
   const qc = useQueryClient();
   const move = useMutation({
     mutationFn: (to: AppointmentStatus) => api.setStatus(item.appointmentId, to),
@@ -73,6 +76,8 @@ export function QueueRow({ item }: { item: QueueItem }) {
   });
   const { can } = useAuth();
   const [vitalsOpen, setVitalsOpen] = useState(false);
+  const [refunding, setRefunding] = useState(false);
+  const refundable = !!onRefunded && can("billing.refund") && !!item.invoiceId && (item.status === "BOOKED" || item.status === "CHECKED_IN");
   const action = can("queue.update") ? nextAction[item.status] : undefined;
   const meta = statusMeta[item.status];
   const vitalsAllowed = can("vitals.write") && item.status !== "CANCELLED" && item.status !== "DONE";
@@ -95,6 +100,12 @@ export function QueueRow({ item }: { item: QueueItem }) {
         </Button>
       )}
       {vitalsOpen && <VitalsDialog item={item} onClose={() => setVitalsOpen(false)} />}
+      {refundable && (
+        <Button variant="ghost" className="min-h-8 px-2 text-xs text-danger" onClick={() => setRefunding(true)} aria-label={`Cancel and refund: ${item.patientName}`}>
+          Refund
+        </Button>
+      )}
+      {refunding && <CancelBillDialog item={item} onClose={() => setRefunding(false)} onDone={(r) => onRefunded?.(r)} />}
       {action && (
         <Button variant="ghost" className="min-h-8 px-2 text-xs" disabled={move.isPending} onClick={() => move.mutate(action.to)} aria-label={`${action.label}: ${item.patientName}`}>
           {action.label}

@@ -17,6 +17,7 @@ import { uuidv7 } from "../../core/ids.js";
 import { atLocal, localDate } from "../../core/clock.js";
 import { financialYear, nextNumber } from "../../core/numbering.js";
 import { getTest, matchTest } from "./catalog.js";
+import { chargeTo } from "../ipd/admissions.js";
 
 const dayRange = (from: string, to = from): [string, string] => {
   const end = atLocal(to, "00:00");
@@ -52,12 +53,12 @@ const toTest = (r: TestRow): OrderTest => ({
 
 interface OrderRow {
   id: string; order_no: string; ordered_at: string; appointment_id: string | null; referred_by: string; subtotal: number; discount: number; total: number;
-  payment_mode: LabOrderDetail["paymentMode"]; billed_by: string;
+  payment_mode: LabOrderDetail["paymentMode"]; billed_by: string; admission_id: string | null; admission_no: string | null;
   p_id: string; uhid: string; p_name: string; sex: LabPatient["sex"]; dob: string | null; phone: string;
 }
 
 const ORDER_SELECT = `
-  select o.*, coalesce(u.display_name, o.created_by) as billed_by,
+  select o.*, coalesce(u.display_name, o.created_by) as billed_by, (select a.admission_no from ipd.admission a where a.id = o.admission_id) as admission_no,
          p.id as p_id, p.uhid, p.name as p_name, p.sex, p.dob, p.phone
     from lab.lab_order o
     join core.patient p on p.id = o.patient_id
@@ -78,7 +79,7 @@ export async function getOrder(q: Queryable, id: string): Promise<LabOrderDetail
   const facility = (await q.query<LabOrderDetail["facility"]>("select name, address, phone, gstin from core.facility where id = 1")).rows[0]!;
   return {
     id: o.id, orderNo: o.order_no, orderedAt: o.ordered_at, appointmentId: o.appointment_id, patient: patientOf(o), referredBy: o.referred_by,
-    subtotal: o.subtotal, discount: o.discount, total: o.total, paymentMode: o.payment_mode, billedBy: o.billed_by,
+    subtotal: o.subtotal, discount: o.discount, total: o.total, paymentMode: o.payment_mode, admissionId: o.admission_id, admissionNo: o.admission_no, billedBy: o.billed_by,
     tests, samples, facility, critical: anyCritical(tests),
   };
 }
@@ -124,6 +125,8 @@ export async function billOrder(db: Db, actor: Actor, raw: unknown, now = new Da
       if (v.appointmentId && !(await q.query("select 1 from core.appointment where id = $1 and patient_id = $2", [v.appointmentId, v.patientId])).rows[0]) {
         throw new AppError(422, "appointment_not_found", "That consultation is not this patient's");
       }
+      const ip = v.admissionId ? await chargeTo(q, v.admissionId, v.patientId) : null;
+      const mode = ip ? "IPD" : v.paymentMode;
       const ids = [...new Set(v.testIds)];
       const tests = [];
       for (const id of ids) {
@@ -139,9 +142,9 @@ export async function billOrder(db: Db, actor: Actor, raw: unknown, now = new Da
       const fy = financialYear(now);
       const orderNo = `LAB/${fy}/${String(await nextNumber(q, `lab-order:${fy}`)).padStart(6, "0")}`;
       await q.query(
-        `insert into lab.lab_order (id, order_no, ordered_at, patient_id, appointment_id, referred_by, subtotal, discount, total, payment_mode, created_by, updated_by)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)`,
-        [id, orderNo, now.toISOString(), v.patientId, v.appointmentId ?? null, v.referredBy, subtotal, v.discount, subtotal - v.discount, v.paymentMode, actor.user],
+        `insert into lab.lab_order (id, order_no, ordered_at, patient_id, appointment_id, referred_by, subtotal, discount, total, payment_mode, admission_id, created_by, updated_by)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)`,
+        [id, orderNo, now.toISOString(), v.patientId, v.appointmentId ?? null, v.referredBy || ip?.doctorName || "", subtotal, v.discount, subtotal - v.discount, mode, v.admissionId ?? null, actor.user],
       );
       for (const [i, t] of tests.entries()) {
         const due = new Date(now.getTime() + t.tatHours * 3600_000);
@@ -152,7 +155,7 @@ export async function billOrder(db: Db, actor: Actor, raw: unknown, now = new Da
         );
       }
       await audit(q, actor, "lab.order", "lab_order", id, {
-        orderNo, patient: v.patientId, tests: tests.map((t) => t.code), total: subtotal - v.discount, discount: v.discount, mode: v.paymentMode,
+        orderNo, patient: v.patientId, tests: tests.map((t) => t.code), total: subtotal - v.discount, discount: v.discount, mode, admission: ip?.admissionNo,
       });
       const order = await getOrder(q, id);
       await q.query("insert into core.idempotency (key, response) values ($1, $2::jsonb)", [v.idempotencyKey, JSON.stringify(order)]);
