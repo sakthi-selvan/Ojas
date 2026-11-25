@@ -39,6 +39,10 @@ export function useServerEvents(): Connection {
           void qc.invalidateQueries({ queryKey: ["lab-order", ev.orderId] });
           void qc.invalidateQueries({ queryKey: ["lab-requests"] });
           void qc.invalidateQueries({ queryKey: ["lab-results"] });
+        } else if (ev.type === "ipd.changed") {
+          void qc.invalidateQueries({ queryKey: ["ipd-wards"] });
+          void qc.invalidateQueries({ queryKey: ["ipd-admissions"] });
+          if (ev.admissionId) void qc.invalidateQueries({ queryKey: ["ipd-admission", ev.admissionId] });
         }
       };
       ws.onclose = () => {

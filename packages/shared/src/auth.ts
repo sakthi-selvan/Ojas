@@ -37,6 +37,12 @@ export const PERMISSIONS = [
   "lab.verify",
   "lab.tests",
   "lab.read",
+  "ipd.read",
+  "ipd.admit",
+  "ipd.chart",
+  "ipd.orders",
+  "ipd.bill",
+  "ipd.setup",
   "users.manage",
   "settings.manage",
   "audit.verify",
@@ -45,10 +51,10 @@ export type Permission = (typeof PERMISSIONS)[number];
 
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   ADMIN: PERMISSIONS,
-  RECEPTION: ["patients.read", "patients.write", "appointments.book", "billing.collect", "queue.update", "lab.order"],
-  ACCOUNTS: ["patients.read", "billing.collect", "billing.discount", "pharmacy.reports"],
-  DOCTOR: ["patients.read", "queue.update", "consult.read", "consult.write", "vitals.write", "lab.read"],
-  NURSE: ["patients.read", "queue.update", "consult.read", "vitals.write"],
+  RECEPTION: ["patients.read", "patients.write", "appointments.book", "billing.collect", "queue.update", "lab.order", "ipd.read", "ipd.admit", "ipd.bill"],
+  ACCOUNTS: ["patients.read", "billing.collect", "billing.discount", "pharmacy.reports", "ipd.read", "ipd.bill"],
+  DOCTOR: ["patients.read", "queue.update", "consult.read", "consult.write", "vitals.write", "lab.read", "ipd.read", "ipd.chart", "ipd.orders"],
+  NURSE: ["patients.read", "queue.update", "consult.read", "vitals.write", "lab.read", "ipd.read", "ipd.chart"],
   LAB: ["patients.read", "patients.write", "lab.order", "lab.collect", "lab.result", "lab.verify", "lab.tests", "lab.read"],
   PHARMACY: ["patients.read", "billing.discount", "pharmacy.sell", "pharmacy.purchase", "pharmacy.stock", "pharmacy.reports"],
 };

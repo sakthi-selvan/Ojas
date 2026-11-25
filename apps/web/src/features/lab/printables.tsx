@@ -2,9 +2,10 @@
  * What the lab prints: tube labels (50 × 25 mm label printer), the lab bill (80 mm receipt) and
  * the A4 report. Each is rendered only while printing, so only one ever reaches the printer.
  */
-import { Fragment, useEffect, useState } from "react";
+import { Fragment } from "react";
 import { FLAG_LABEL, LAB_SECTION_LABEL, SAMPLE_SHORT, ageLabel, formatINR, type LabOrderDetail, type LabSection, type OrderTest } from "@ojas/shared";
 import { dateTimeLabel } from "../../lib/api";
+import { usePrintJob } from "../../lib/print";
 import { Barcode } from "./barcode";
 
 export type PrintJob =
@@ -12,41 +13,14 @@ export type PrintJob =
   | { kind: "bill"; order: LabOrderDetail }
   | { kind: "report"; order: LabOrderDetail };
 
-const PAGE: Record<PrintJob["kind"], string> = {
-  labels: "@page { size: 50mm 25mm; margin: 0; }",
-  bill: "@page { size: 80mm auto; margin: 4mm; }",
-  report: "@page { size: A4 portrait; margin: 12mm; }",
-};
-// Labels and the receipt go straight to their own printer in the desktop app; the report asks which printer.
-const SILENT: Record<PrintJob["kind"], boolean> = { labels: true, bill: true, report: false };
-
-/** Renders the job, prints it, then removes it. */
+/** Labels go to the label printer and the bill to the receipt printer; the report is A4. */
 export function usePrint() {
-  const [job, setJob] = useState<PrintJob | null>(null);
-  useEffect(() => {
-    if (!job) return;
-    const style = document.createElement("style");
-    style.textContent = `@media print { ${PAGE[job.kind]} }`;
-    document.head.append(style);
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      style.remove();
-      setJob(null);
-    };
-    // Let React paint the printable first.
-    const t = setTimeout(() => {
-      if (window.ojas) void window.ojas.print({ silent: SILENT[job.kind] }).finally(finish);
-      else { window.print(); finish(); }
-    }, 50);
-    return () => clearTimeout(t);
-  }, [job]);
-  const view = !job ? null
-    : job.kind === "labels" ? <PrintableLabels order={job.order} sampleIds={job.sampleIds} />
-    : job.kind === "bill" ? <PrintableLabBill order={job.order} />
-    : <PrintableLabReport order={job.order} />;
-  return { print: setJob, view };
+  return usePrintJob<PrintJob>(
+    (job) => job.kind === "labels" ? <PrintableLabels order={job.order} sampleIds={job.sampleIds} />
+      : job.kind === "bill" ? <PrintableLabBill order={job.order} />
+      : <PrintableLabReport order={job.order} />,
+    (job) => (job.kind === "labels" ? "label" : job.kind === "bill" ? "receipt" : "A4"),
+  );
 }
 
 const ageSex = (o: LabOrderDetail) => `${o.patient.dob ? ageLabel(o.patient.dob) : "—"} / ${o.patient.sex}`;

@@ -4,8 +4,9 @@ import { bmiOf, VITAL_KEYS, type Encounter, type Vitals, type VitalsInput } from
 import { api, ApiError, timeLabel } from "../../lib/api";
 import { Alert, Button, cx } from "../../components/ui";
 
-type Key = (typeof VITAL_KEYS)[number];
-const FIELDS: { key: Key; label: string; unit: string; step: string; width?: string }[] = [
+export type VitalKey = (typeof VITAL_KEYS)[number];
+type Key = VitalKey;
+export const VITAL_FIELDS: { key: Key; label: string; unit: string; step: string; width?: string }[] = [
   { key: "temperatureF", label: "Temp", unit: "°F", step: "0.1" },
   { key: "pulse", label: "Pulse", unit: "/min", step: "1" },
   { key: "bpSystolic", label: "BP sys", unit: "mmHg", step: "1" },
@@ -17,12 +18,13 @@ const FIELDS: { key: Key; label: string; unit: string; step: string; width?: str
   { key: "bloodSugar", label: "Sugar (RBS)", unit: "mg/dL", step: "1" },
 ];
 
-type Form = Record<Key, string>;
-const toForm = (v?: Vitals): Form => Object.fromEntries(VITAL_KEYS.map((k) => [k, v?.[k] == null ? "" : String(v[k])])) as Form;
-const toInput = (f: Form): VitalsInput => Object.fromEntries(VITAL_KEYS.map((k) => [k, f[k].trim() === "" ? null : Number(f[k])])) as VitalsInput;
+export type VitalsFormState = Record<Key, string>;
+type Form = VitalsFormState;
+export const toVitalsForm = (v?: Vitals): Form => Object.fromEntries(VITAL_KEYS.map((k) => [k, v?.[k] == null ? "" : String(v[k])])) as Form;
+export const toVitalsInput = (f: Form): VitalsInput => Object.fromEntries(VITAL_KEYS.map((k) => [k, f[k].trim() === "" ? null : Number(f[k])])) as VitalsInput;
 
 /** Out-of-range readings get a coloured hint, so the doctor's eye goes to them first. */
-function flag(key: Key, n: number): "high" | "low" | null {
+export function vitalFlag(key: Key, n: number): "high" | "low" | null {
   const ranges: Partial<Record<Key, [number, number]>> = {
     temperatureF: [97, 99.5], pulse: [60, 100], bpSystolic: [90, 139], bpDiastolic: [60, 89], spo2: [95, 100], respRate: [12, 20], bloodSugar: [70, 199],
   };
@@ -43,7 +45,7 @@ export function VitalsForm({ appointmentId, encounter, readOnly, onSaved, autoFo
   autoFocus?: boolean;
 }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState<Form>(() => toForm(encounter?.vitals));
+  const [form, setForm] = useState<Form>(() => toVitalsForm(encounter?.vitals));
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const first = useRef<HTMLInputElement>(null);
@@ -54,7 +56,7 @@ export function VitalsForm({ appointmentId, encounter, readOnly, onSaved, autoFo
     return () => clearTimeout(t);
   }, [autoFocus]);
   const save = useMutation({
-    mutationFn: () => api.saveVitals(appointmentId, toInput(form)),
+    mutationFn: () => api.saveVitals(appointmentId, toVitalsInput(form)),
     onSuccess: (e) => {
       setErrs({});
       setSavedAt(new Date().toISOString());
@@ -69,14 +71,14 @@ export function VitalsForm({ appointmentId, encounter, readOnly, onSaved, autoFo
     save.mutate();
   };
   const bmi = bmiOf({ heightCm: Number(form.heightCm) || null, weightKg: Number(form.weightKg) || null });
-  const dirty = JSON.stringify(form) !== JSON.stringify(toForm(encounter?.vitals));
+  const dirty = JSON.stringify(form) !== JSON.stringify(toVitalsForm(encounter?.vitals));
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-3" aria-label="Vitals">
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 xl:grid-cols-9">
-        {FIELDS.map((f, i) => {
+        {VITAL_FIELDS.map((f, i) => {
           const n = form[f.key] === "" ? null : Number(form[f.key]);
-          const fl = n == null || Number.isNaN(n) ? null : flag(f.key, n);
+          const fl = n == null || Number.isNaN(n) ? null : vitalFlag(f.key, n);
           const id = `v-${appointmentId}-${f.key}`;
           return (
             <div key={f.key} className="flex min-w-0 flex-col gap-0.5">

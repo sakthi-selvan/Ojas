@@ -1,4 +1,6 @@
 import type {
+  Admission, AdmissionSummary, AdmitInput, ChargeInput, DepositInput, DoseInput, IpdService, MedOrderInput, NoteInput, ServiceInput, SettleInput,
+  SummaryInput, TransferInput, Ward, WardInput,
   AmendInput, CollectInput, LabBillInput, LabOrderDetail, LabOrderSummary, LabRequest, LabTest, OrderTest, PatientLabResult, RejectSampleInput, ResultsInput, TestInput,
   CheckoutInput, Patient, PatientSearchResult, Practitioner, QueueItem, QuickRegisterInput, Receipt, DaySlots, AppointmentStatus,
   SystemInfo, BackupStatus, BackupConfigInput, BackupRun, BackupFile, RestoreInput, RestoreResult,
@@ -108,6 +110,30 @@ export const api = {
   verifyResult: (orderTestId: string, rowVersion: number) => request<OrderTest>("POST", `/lab/results/${orderTestId}/verify`, { rowVersion }),
   amendResult: (orderTestId: string, input: AmendInput) => request<OrderTest>("POST", `/lab/results/${orderTestId}/amend`, input),
   patientLabResults: (patientId: string) => request<PatientLabResult[]>("GET", `/lab/patients/${patientId}/results`),
+
+  // In-patients
+  wards: (all = false) => request<Ward[]>("GET", `/ipd/wards${all ? "?all=true" : ""}`),
+  createWard: (input: WardInput) => request<Ward>("POST", "/ipd/wards", input),
+  updateWard: (id: string, input: WardInput) => request<Ward>("PUT", `/ipd/wards/${id}`, input),
+  bedReady: (bedId: string) => request<void>("POST", `/ipd/beds/${bedId}/ready`, {}),
+  ipdServices: (all = false) => request<IpdService[]>("GET", `/ipd/services${all ? "?all=true" : ""}`),
+  createService: (input: ServiceInput) => request<IpdService>("POST", "/ipd/services", input),
+  updateService: (id: string, input: ServiceInput) => request<IpdService>("PUT", `/ipd/services/${id}`, input),
+  admissions: (status: "ADMITTED" | "DISCHARGED", q = "") => request<AdmissionSummary[]>("GET", `/ipd/admissions?status=${status}&q=${encodeURIComponent(q)}`),
+  admission: (id: string) => request<Admission>("GET", `/ipd/admissions/${id}`),
+  admit: (input: AdmitInput) => request<Admission>("POST", "/ipd/admissions", input),
+  transfer: (id: string, input: TransferInput) => request<Admission>("POST", `/ipd/admissions/${id}/transfer`, input),
+  addNote: (id: string, input: NoteInput) => request<Admission>("POST", `/ipd/admissions/${id}/notes`, input),
+  addIpdVitals: (id: string, input: VitalsInput) => request<Admission>("POST", `/ipd/admissions/${id}/vitals`, input),
+  addMed: (id: string, input: MedOrderInput) => request<Admission>("POST", `/ipd/admissions/${id}/meds`, input),
+  stopMed: (medId: string, reason: string) => request<Admission>("POST", `/ipd/meds/${medId}/stop`, { reason }),
+  recordDose: (medId: string, input: DoseInput) => request<Admission>("POST", `/ipd/meds/${medId}/doses`, input),
+  addCharge: (id: string, input: ChargeInput) => request<Admission>("POST", `/ipd/admissions/${id}/charges`, input),
+  cancelCharge: (chargeId: string, reason: string) => request<Admission>("POST", `/ipd/charges/${chargeId}/cancel`, { reason }),
+  addDeposit: (id: string, input: DepositInput) => request<Admission>("POST", `/ipd/admissions/${id}/deposits`, input),
+  saveSummary: (id: string, input: SummaryInput) => request<Admission>("PUT", `/ipd/admissions/${id}/summary`, input),
+  signSummary: (id: string, summaryVersion: number) => request<Admission>("POST", `/ipd/admissions/${id}/summary/sign`, { summaryVersion }),
+  discharge: (id: string, input: SettleInput) => request<Admission>("POST", `/ipd/admissions/${id}/discharge`, input),
 
   // Auth
   authStatus: () => request<AuthStatus>("GET", "/auth/status"),

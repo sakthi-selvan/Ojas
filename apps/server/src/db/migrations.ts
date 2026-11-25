@@ -562,6 +562,158 @@ export const migrations: { id: number; name: string; sql: string }[] = [
       create index order_test_status_idx on lab.order_test (status) where status <> 'VERIFIED';
     `,
   },
+  {
+    id: 8,
+    name: "inpatients",
+    sql: `
+      create schema if not exists ipd;
+
+      create table ipd.ward (
+        id             uuid primary key,
+        name           text not null unique,
+        kind           text not null check (kind in ('GENERAL','SEMI_PRIVATE','PRIVATE','ICU','OTHER')),
+        bed_charge     bigint not null check (bed_charge >= 0),
+        nursing_charge bigint not null default 0 check (nursing_charge >= 0),
+        active         boolean not null default true,
+        ${meta}
+      );
+
+      create table ipd.bed (
+        id            uuid primary key,
+        ward_id       uuid not null references ipd.ward(id),
+        label         text not null,
+        sort_no       integer not null,
+        active        boolean not null default true,
+        needs_cleaning boolean not null default false,
+        ${meta}
+      );
+      create unique index bed_label_uq on ipd.bed (ward_id, upper(label));
+
+      create table ipd.service (
+        id       uuid primary key,
+        name     text not null unique,
+        category text not null,
+        price    bigint not null check (price >= 0),
+        active   boolean not null default true,
+        ${meta}
+      );
+
+      create table ipd.admission (
+        id                uuid primary key,
+        admission_no      text not null unique,
+        patient_id        uuid not null references core.patient(id),
+        practitioner_id   uuid not null references core.practitioner(id),
+        bed_id            uuid not null references ipd.bed(id),
+        admitted_at       timestamptz not null,
+        reason            text not null,
+        attendant_name    text not null default '',
+        attendant_relation text not null default '',
+        attendant_phone   text not null default '',
+        status            text not null default 'ADMITTED' check (status in ('ADMITTED','DISCHARGED')),
+        summary           jsonb,
+        summary_version   integer not null default 0,
+        summary_signed_at timestamptz,
+        summary_signed_by text,
+        discharged_at     timestamptz,
+        discharge_type    text,
+        discount          bigint not null default 0,
+        final_bill_no     text unique,
+        ${meta}
+      );
+      -- The database itself stops a bed (or a patient) being admitted twice.
+      create unique index admission_bed_uq on ipd.admission (bed_id) where status = 'ADMITTED';
+      create unique index admission_patient_uq on ipd.admission (patient_id) where status = 'ADMITTED';
+      create index admission_discharged_idx on ipd.admission (discharged_at desc) where status = 'DISCHARGED';
+
+      -- Where the patient was, and at what daily rates (copied, so changing a ward's rate never rewrites a stay).
+      create table ipd.bed_stay (
+        id             uuid primary key,
+        admission_id   uuid not null references ipd.admission(id),
+        bed_id         uuid not null references ipd.bed(id),
+        ward_name      text not null,
+        ward_kind      text not null,
+        bed_label      text not null,
+        bed_charge     bigint not null,
+        nursing_charge bigint not null,
+        from_at        timestamptz not null,
+        to_at          timestamptz,
+        reason         text not null default ''
+      );
+      create index bed_stay_admission_idx on ipd.bed_stay (admission_id, from_at);
+
+      create table ipd.note (
+        id           uuid primary key,
+        admission_id uuid not null references ipd.admission(id),
+        kind         text not null check (kind in ('DOCTOR','NURSING')),
+        text         text not null,
+        at           timestamptz not null,
+        by_user      text not null
+      );
+      create index note_admission_idx on ipd.note (admission_id, at desc);
+
+      create table ipd.vitals (
+        id           uuid primary key,
+        admission_id uuid not null references ipd.admission(id),
+        vitals       jsonb not null,
+        at           timestamptz not null,
+        by_user      text not null
+      );
+      create index vitals_admission_idx on ipd.vitals (admission_id, at desc);
+
+      create table ipd.med_order (
+        id           uuid primary key,
+        admission_id uuid not null references ipd.admission(id),
+        med          jsonb not null,
+        started_at   timestamptz not null,
+        started_by   text not null,
+        stopped_at   timestamptz,
+        stopped_by   text,
+        stop_reason  text not null default ''
+      );
+      create index med_order_admission_idx on ipd.med_order (admission_id, started_at);
+
+      create table ipd.med_dose (
+        id           uuid primary key,
+        med_order_id uuid not null references ipd.med_order(id),
+        status       text not null check (status in ('GIVEN','HELD','REFUSED')),
+        note         text not null default '',
+        at           timestamptz not null,
+        by_user      text not null
+      );
+      create index med_dose_order_idx on ipd.med_dose (med_order_id, at desc);
+
+      -- Charges are never deleted: a mistaken one is cancelled with a reason and stays visible.
+      create table ipd.charge (
+        id            uuid primary key,
+        admission_id  uuid not null references ipd.admission(id),
+        service_id    uuid references ipd.service(id),
+        description   text not null,
+        category      text not null,
+        quantity      integer not null check (quantity > 0),
+        unit_price    bigint not null check (unit_price > 0),
+        amount        bigint not null check (amount = quantity * unit_price),
+        charged_at    timestamptz not null,
+        charged_by    text not null,
+        cancelled_at  timestamptz,
+        cancelled_by  text,
+        cancel_reason text not null default ''
+      );
+      create index charge_admission_idx on ipd.charge (admission_id, charged_at);
+
+      -- Money received (deposits, the final payment) and refunds. Never edited.
+      create table ipd.payment (
+        id           uuid primary key,
+        receipt_no   text not null unique,
+        admission_id uuid not null references ipd.admission(id),
+        kind         text not null check (kind in ('DEPOSIT','FINAL','REFUND')),
+        amount       bigint not null check (amount > 0),
+        mode         text not null check (mode in ('CASH','UPI','CARD')),
+        received_at  timestamptz not null,
+        received_by  text not null
+      );
+      create index ipd_payment_admission_idx on ipd.payment (admission_id, received_at);
+    `,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {

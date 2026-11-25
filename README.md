@@ -7,7 +7,7 @@ Design goal: a receptionist registers a patient, books an appointment and prints
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
-## What works today (Phase 1 slice: front desk)
+## What works today
 
 - **One-screen front desk:** search (phone, name or UHID) → 4-field quick registration → doctor and slot → bill and payment → token and receipt.
 - Returning patient: **5 digits, Enter, Enter, F9**. Every action has a keyboard shortcut, shown on its button.
@@ -65,6 +65,15 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - **Results:** typed in like a worksheet (<kbd>Enter</kbd> moves to the next box). The reference range for the patient's age and sex is shown, values are flagged Low, High or Critical as they are typed, and critical values raise a warning. Results are then verified, which locks them. Changing a verified result needs a reason, and the earlier values are kept in the audit trail.
 - **Report:** an A4 report grouped by section, with flags, reference ranges, sample details, the method, and who verified it. A partial report says how many tests are still in progress.
 - **Doctor's view:** verified results, newest first with abnormal values marked, appear beside the consultation.
+
+### In-patients
+
+- **In-patients screen** (<kbd>Alt</kbd>+<kbd>6</kbd>): a bed board for every ward (free, occupied, being cleaned, ready to go home), Admit, recent discharges with search, and Wards & charges for administrators. Reception admits and bills, nurses chart, doctors write orders and the discharge summary, and Accounts settles bills.
+- **Wards and beds:** each ward has a daily bed charge and nursing charge. Beds can be typed as ranges (`G1-G10`). A bed with a patient in it can't be taken out of use, and a rate change applies only to new stays. Priced services (doctor visit, dressing, oxygen…) can be added to a bill in one click.
+- **Admission:** patient, admitting doctor, a free bed, the reason, the attendant, and an optional advance with its receipt. Admissions are numbered `IP/26-27/000001`. The database itself stops a bed, or a patient, being admitted twice. Moving bed needs a reason, and the old bed goes for cleaning.
+- **Chart:** vitals over time (out-of-range readings highlighted), doctors' and nursing notes, and the patient's lab results alongside. On the treatment chart the doctor starts and stops medicines (with dose, frequency and route), and nurses record each dose as given, held or refused (held and refused need a reason).
+- **Bill:** room and nursing are charged by the midnight census: each night in a bed at midnight is one day, at the rate of the ward slept in, and a stay without a night counts as one day. Charges can be added, or removed with a reason, and stay visible. Further advances are receipted (`IPR/26-27/000001`).
+- **Discharge:** the doctor writes the summary (outcome, final diagnosis with ICD-10, course in hospital, investigations, treatment, condition, medicines to continue, advice and review date). "Add lab results" and "Copy from treatment chart" fill parts of it in. Signing advises discharge, and editing a signed summary takes the signature off. The desk then settles the bill: it collects the balance, or refunds any advance left over, and discounts need the discount permission. The bill is numbered `IPB/26-27/000001`, the bed goes for cleaning, and the record is locked. The A4 discharge summary and final bill print, and an interim bill can be printed at any time.
 
 ### Backups
 
@@ -151,4 +160,5 @@ The desktop app saves its choice in its user data folder. To set it for every us
 3. Admin-editable role permissions, and linking doctor accounts to their practitioner record, so the consultation screen opens on the right doctor without asking.
 4. Pharmacy: sales returns, supplier returns and credit notes, GSTR-1 / purchase GST reports, and barcode scanning.
 5. Laboratory: analyser interfacing, outsourced tests, sending reports to patients (print-out, WhatsApp or email), and age-specific ranges for children.
-6. Then the modules: IPD.
+6. In-patients: putting pharmacy issues and lab tests on the in-patient bill instead of paying at each counter, a dose schedule (due and missed doses), operation theatre notes, package (fixed-price) bills, insurance/TPA claims, and correcting a summary after discharge.
+7. Then: connectors (devices, messaging, government health IDs).

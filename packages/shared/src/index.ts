@@ -8,6 +8,7 @@ import { z } from "zod";
 export * from "./auth";
 export * from "./settings"; export * from "./backup"; export * from "./network"; export * from "./consult"; export * from "./pharmacy";
 export * from "./lab";
+export * from "./ipd";
 export * from "./primitives";
 import { Paise, Sex, PaymentMode, Phone } from "./primitives";
 import type { Session } from "./settings";
@@ -140,6 +141,8 @@ export type ServerEvent =
   | { type: "consult.changed"; appointmentId: string }
   /** A lab order was billed, collected, resulted or verified. */
   | { type: "lab.changed"; orderId: string }
+  /** An admission, a bed, or a ward changed (admitted, charted, billed, discharged, bed cleaned). */
+  | { type: "ipd.changed"; admissionId: string | null }
   | { type: "hello"; serverTime: string };
 
 // ───────────────────────── Helpers ─────────────────────────

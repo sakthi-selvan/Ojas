@@ -25,6 +25,8 @@ import * as pharmacy from "./modules/pharmacy/catalog.js";
 import * as pharmacyTx from "./modules/pharmacy/transactions.js";
 import * as labCatalog from "./modules/lab/catalog.js";
 import * as lab from "./modules/lab/orders.js";
+import * as wards from "./modules/ipd/wards.js";
+import * as ipd from "./modules/ipd/admissions.js";
 import { DrugSchedule } from "@ojas/shared";
 
 export interface AppOptions {
@@ -389,6 +391,59 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     return labChanged(r, await orderOfTest(r.id));
   });
   app.get<ById>("/api/lab/patients/:id/results", need("lab.read"), async (req) => lab.patientResults(db, idParam(req.params.id)));
+
+  // ── In-patients ──
+  const ipdChanged = <T extends { id: string } | void>(r: T, admissionId: string | null = r ? (r as { id: string }).id : null): T => {
+    realtime.broadcast({ type: "ipd.changed", admissionId });
+    return r;
+  };
+  const anyIpd = (req: FastifyRequest) => {
+    if (!req.session!.user.permissions.some((p) => p.startsWith("ipd."))) throw new AppError(403, "forbidden", "You don't have permission to do this. Ask an administrator.");
+  };
+  const allowed = (req: FastifyRequest, ...perms: Permission[]) => {
+    if (!perms.some((p) => can(req.session!.user.role, p))) throw new AppError(403, "forbidden", "You don't have permission to do this. Ask an administrator.");
+  };
+  app.get<{ Querystring: { all?: string } }>("/api/ipd/wards", async (req) => {
+    anyIpd(req);
+    return wards.listWards(db, { includeInactive: req.query.all === "true" });
+  });
+  app.post("/api/ipd/wards", need("ipd.setup"), async (req, reply) => reply.status(201).send(ipdChanged(await wards.createWard(db, actorOf(req), req.body), null)));
+  app.put<ById>("/api/ipd/wards/:id", need("ipd.setup"), async (req) => ipdChanged(await wards.updateWard(db, actorOf(req), idParam(req.params.id), req.body), null));
+  app.post<ById>("/api/ipd/beds/:id/ready", async (req, reply) => {
+    allowed(req, "ipd.chart", "ipd.admit");
+    await wards.markBedReady(db, actorOf(req), idParam(req.params.id));
+    ipdChanged(undefined, null);
+    return reply.status(204).send();
+  });
+  app.get<{ Querystring: { all?: string } }>("/api/ipd/services", async (req) => {
+    anyIpd(req);
+    return wards.listServices(db, req.query.all === "true");
+  });
+  app.post("/api/ipd/services", need("ipd.setup"), async (req, reply) => reply.status(201).send(await wards.saveService(db, actorOf(req), null, req.body)));
+  app.put<ById>("/api/ipd/services/:id", need("ipd.setup"), async (req) => wards.saveService(db, actorOf(req), idParam(req.params.id), req.body));
+  app.get<{ Querystring: { status?: string; q?: string } }>("/api/ipd/admissions", need("ipd.read"), async (req) =>
+    ipd.listAdmissions(db, { status: req.query.status === "DISCHARGED" ? "DISCHARGED" : "ADMITTED", q: req.query.q, now: now() }),
+  );
+  app.post("/api/ipd/admissions", need("ipd.admit"), async (req, reply) => reply.status(201).send(ipdChanged(await ipd.admit(db, actorOf(req), req.body, now()))));
+  app.get<ById>("/api/ipd/admissions/:id", need("ipd.read"), async (req) => ipd.getAdmission(db, idParam(req.params.id), now()));
+  app.post<ById>("/api/ipd/admissions/:id/transfer", need("ipd.admit"), async (req) => ipdChanged(await ipd.transfer(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/ipd/admissions/:id/notes", async (req) => {
+    // Doctors write doctor's notes; nurses (and doctors) write nursing notes.
+    allowed(req, ipd.noteKindOf(req.body) === "DOCTOR" ? "ipd.orders" : "ipd.chart");
+    return ipdChanged(await ipd.addNote(db, actorOf(req), idParam(req.params.id), req.body, now()));
+  });
+  app.post<ById>("/api/ipd/admissions/:id/vitals", need("ipd.chart"), async (req) => ipdChanged(await ipd.addVitals(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/ipd/admissions/:id/meds", need("ipd.orders"), async (req) => ipdChanged(await ipd.addMed(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/ipd/meds/:id/stop", need("ipd.orders"), async (req) => ipdChanged(await ipd.stopMed(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/ipd/meds/:id/doses", need("ipd.chart"), async (req) => ipdChanged(await ipd.recordDose(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/ipd/admissions/:id/charges", need("ipd.bill"), async (req) => ipdChanged(await ipd.addCharge(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/ipd/charges/:id/cancel", need("ipd.bill"), async (req) => ipdChanged(await ipd.cancelCharge(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/ipd/admissions/:id/deposits", need("ipd.bill"), async (req) => ipdChanged(await ipd.addDeposit(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.put<ById>("/api/ipd/admissions/:id/summary", need("ipd.orders"), async (req) => ipdChanged(await ipd.saveSummary(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/ipd/admissions/:id/summary/sign", need("ipd.orders"), async (req) => ipdChanged(await ipd.signSummary(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/ipd/admissions/:id/discharge", need("ipd.bill"), async (req) =>
+    ipdChanged(await ipd.settle(db, actorOf(req), idParam(req.params.id), req.body, now(), { allowDiscount: can(req.session!.user.role, "billing.discount") })),
+  );
 
   // ── Web UI for LAN browsers / token displays ──
   if (opts.webDir && existsSync(opts.webDir)) {
