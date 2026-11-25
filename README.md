@@ -43,7 +43,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - **Vitals at triage:** nurses record temperature (°F), pulse, BP, SpO₂, breathing rate, weight, height (BMI is worked out) and blood sugar from the OPD queue. Out-of-range readings are coloured. Vitals and the doctor's notes are saved separately, so a nurse and a doctor working on the same visit never overwrite each other. A screen with an out-of-date copy is refused rather than overwriting.
 - **Sign & print** (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>): locks the record, marks the visit done and prints an A5 prescription with the doctor's name, qualification and registration number. In the desktop app it opens the print dialog, so it doesn't go to the receipt printer.
 - **Corrections:** a signed record is changed only through "Correct", which needs a reason. Every signed version is kept exactly as signed (`GET /api/consult/:appointmentId/versions`), and signing and corrections are in the audit trail.
-- Tests ordered here wait as "ordered" for the laboratory module.
+- Tests ordered here appear at the laboratory desk, and verified results show beside the consultation.
 
 ### Pharmacy
 
@@ -55,6 +55,16 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - **GST:** MRP includes GST. The 80 mm bill shows each line's batch and expiry, the drug licence number and GSTIN, and a CGST/SGST table per rate, with any discount shared across the lines.
 - **Stock & expiry:** expired stock still on the shelf, stock expiring within 90 days, and medicines below their reorder level. Each batch shows its stock, and corrections (expired, damaged, returned to supplier, a stock count, or other) need a reason. Only a count can add stock. Every movement is recorded and audited.
 - **Schedule H1 register:** date, bill, patient, prescriber, medicine, batch and quantity for any period, H1 and X by default or all scheduled medicines, printable on A4 for inspection.
+
+### Laboratory
+
+- **Laboratory screen** (<kbd>Alt</kbd>+<kbd>5</kbd>, Laboratory role and administrators; Reception can bill tests), with tabs for the Worklist, New order and Tests & prices.
+- **Test catalogue:** each test has a code, section, sample type, price, turnaround time and its parameters (numeric, text or a fixed choice). Each numeric parameter can have reference ranges by sex and age, with critical limits. "Add common tests" loads 18 everyday tests (CBC, sugars, lipid, LFT, RFT, thyroid, dengue, urine and more) with adult ranges, ready to be priced.
+- **Billing** (<kbd>F2</kbd> to add a test, <kbd>F9</kbd> to bill): pick a patient, or a test request from a doctor's signed consultation in the last three days, which fills in the patient, the doctor and the matching tests. Unpriced and inactive tests can't be billed, and discounts need the discount permission. Bills are numbered `LAB/26-27/000001`.
+- **Samples:** one sample per container type, each with an accession number (`261125-001`) and a 50 × 25 mm barcode label. A scanned label opens its order. A rejected sample (haemolysed, clotted) needs a reason, and its tests go back to waiting for a new sample.
+- **Results:** typed in like a worksheet (<kbd>Enter</kbd> moves to the next box). The reference range for the patient's age and sex is shown, values are flagged Low, High or Critical as they are typed, and critical values raise a warning. Results are then verified, which locks them. Changing a verified result needs a reason, and the earlier values are kept in the audit trail.
+- **Report:** an A4 report grouped by section, with flags, reference ranges, sample details, the method, and who verified it. A partial report says how many tests are still in progress.
+- **Doctor's view:** verified results, newest first with abnormal values marked, appear beside the consultation.
 
 ### Backups
 
@@ -140,4 +150,5 @@ The desktop app saves its choice in its user data folder. To set it for every us
 2. Rescheduling bookings hit by a new holiday or leave, bill cancellation and refunds, and a day-end cash report.
 3. Admin-editable role permissions, and linking doctor accounts to their practitioner record, so the consultation screen opens on the right doctor without asking.
 4. Pharmacy: sales returns, supplier returns and credit notes, GSTR-1 / purchase GST reports, and barcode scanning.
-5. Then the modules: LIMS (picks up the tests ordered in consultations), IPD.
+5. Laboratory: analyser interfacing, outsourced tests, sending reports to patients (print-out, WhatsApp or email), and age-specific ranges for children.
+6. Then the modules: IPD.

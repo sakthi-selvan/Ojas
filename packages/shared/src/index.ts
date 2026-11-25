@@ -7,6 +7,7 @@ import { z } from "zod";
 
 export * from "./auth";
 export * from "./settings"; export * from "./backup"; export * from "./network"; export * from "./consult"; export * from "./pharmacy";
+export * from "./lab";
 export * from "./primitives";
 import { Paise, Sex, PaymentMode, Phone } from "./primitives";
 import type { Session } from "./settings";
@@ -137,6 +138,8 @@ export type ServerEvent =
   | { type: "queue.changed"; date: string }
   /** A consultation's vitals or notes changed (a nurse recorded vitals while the doctor has it open). */
   | { type: "consult.changed"; appointmentId: string }
+  /** A lab order was billed, collected, resulted or verified. */
+  | { type: "lab.changed"; orderId: string }
   | { type: "hello"; serverTime: string };
 
 // ───────────────────────── Helpers ─────────────────────────

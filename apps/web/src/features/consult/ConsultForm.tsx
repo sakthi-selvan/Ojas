@@ -12,6 +12,7 @@ import { SuggestInput } from "./SuggestInput";
 import { VitalsForm } from "./VitalsForm";
 import { localDay, medLine, PrintablePrescription, printPrescription } from "./Prescription";
 import { PastVisits } from "./PastVisits";
+import { LabResults } from "./LabResults";
 
 interface Notes {
   chiefComplaint: string; history: string; examination: string; advice: string; followUpDate: string;
@@ -53,7 +54,7 @@ function Layout({ children, aside }: { children: ReactNode; aside: ReactNode }) 
   return (
     <div className="grid items-start gap-4 2xl:grid-cols-[1fr_22rem]">
       <div className="flex min-w-0 flex-col gap-4">{children}</div>
-      <aside className="min-w-0 2xl:sticky 2xl:top-20">{aside}</aside>
+      <aside className="flex min-w-0 flex-col gap-4 2xl:sticky 2xl:top-20">{aside}</aside>
     </div>
   );
 }
@@ -190,7 +191,7 @@ function DraftConsult({ view, onNext }: { view: ConsultView; onNext?: () => void
     });
 
   return (
-    <Layout aside={<PastVisits appointmentId={id} onRepeat={repeat} />}>
+    <Layout aside={<><LabResults patientId={view.patient.id} /><PastVisits appointmentId={id} onRepeat={repeat} /></>}>
       <Card className="flex flex-col gap-4 p-4">
         <PatientHeader
           view={view}
@@ -403,7 +404,7 @@ function SignedConsult({ view, encounter: e, onNext }: { view: ConsultView; enco
   ].filter(Boolean);
 
   return (
-    <Layout aside={<PastVisits appointmentId={view.appointmentId} />}>
+    <Layout aside={<><LabResults patientId={view.patient.id} /><PastVisits appointmentId={view.appointmentId} /></>}>
       <Card className="flex flex-col gap-4 p-4">
         <PatientHeader view={view} right={<Badge tone="ok"><CheckCircle2 aria-hidden className="size-3.5" /> Signed</Badge>} />
         <div role="status" className="rounded-lg bg-ok-soft px-3 py-2 text-sm text-ok">

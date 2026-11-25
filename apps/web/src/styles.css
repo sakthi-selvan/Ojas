@@ -111,4 +111,8 @@ body {
   .print-area { display: block !important; position: absolute; inset: 0 auto auto 0; width: 72mm; }
   /* Prescriptions: full page width (A5); see printPrescription(). */
   .print-area.print-rx { width: 100%; font-family: ui-serif, Georgia, "Times New Roman", serif; }
+  /* Lab report (A4) and sample labels (50 × 25 mm, one per label). */
+  .print-area.print-report { width: 100%; }
+  .print-area.print-labels { width: 50mm; }
+  .lab-label { width: 50mm; height: 25mm; padding: 1.5mm 2mm; box-sizing: border-box; overflow: hidden; break-after: page; }
 }

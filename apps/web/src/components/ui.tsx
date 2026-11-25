@@ -49,7 +49,7 @@ export const Field = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     const inputId = id ?? autoId;
     const msgId = `${inputId}-msg`;
     return (
-      <div className={cx("flex flex-col gap-1", className)}>
+      <div className={cx("flex min-w-0 flex-col gap-1", className)}>
         <label htmlFor={inputId} className="text-sm font-medium text-ink-2">
           {label}
         </label>
@@ -59,7 +59,7 @@ export const Field = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
           aria-invalid={error ? true : undefined}
           aria-describedby={error || hint ? msgId : undefined}
           className={cx(
-            "min-h-11 rounded-lg border bg-surface px-3 text-base text-ink placeholder:text-ink-3",
+            "min-h-11 w-full min-w-0 rounded-lg border bg-surface px-3 text-base text-ink placeholder:text-ink-3",
             error ? "border-danger" : "border-line",
           )}
           {...rest}
@@ -80,13 +80,13 @@ export function Select({ label, error, hint, className, id, children, ...rest }:
   const selectId = id ?? autoId;
   const msgId = `${selectId}-msg`;
   return (
-    <div className={cx("flex flex-col gap-1", className)}>
+    <div className={cx("flex min-w-0 flex-col gap-1", className)}>
       <label htmlFor={selectId} className="text-sm font-medium text-ink-2">{label}</label>
       <select
         id={selectId}
         aria-invalid={error ? true : undefined}
         aria-describedby={error || hint ? msgId : undefined}
-        className={cx("min-h-11 rounded-lg border bg-surface px-3 text-base text-ink", error ? "border-danger" : "border-line")}
+        className={cx("min-h-11 w-full min-w-0 rounded-lg border bg-surface px-3 text-base text-ink", error ? "border-danger" : "border-line")}
         {...rest}
       >
         {children}

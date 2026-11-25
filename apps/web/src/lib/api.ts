@@ -1,4 +1,5 @@
 import type {
+  AmendInput, CollectInput, LabBillInput, LabOrderDetail, LabOrderSummary, LabRequest, LabTest, OrderTest, PatientLabResult, RejectSampleInput, ResultsInput, TestInput,
   CheckoutInput, Patient, PatientSearchResult, Practitioner, QueueItem, QuickRegisterInput, Receipt, DaySlots, AppointmentStatus,
   SystemInfo, BackupStatus, BackupConfigInput, BackupRun, BackupFile, RestoreInput, RestoreResult,
   Facility, FacilityInput, PublicFacility, PractitionerInput, Holiday, HolidayInput, Leave, LeaveInput,
@@ -93,6 +94,20 @@ export const api = {
   sales: (date: string) => request<SaleSummary[]>("GET", `/pharmacy/sales?date=${date}`),
   bill: (id: string) => request<PharmacyBill>("GET", `/pharmacy/sales/${id}`),
   register: (from: string, to: string, schedules: string) => request<RegisterEntry[]>("GET", `/pharmacy/register?from=${from}&to=${to}&schedule=${schedules}`),
+  labTests: (q = "", opts: { all?: boolean } = {}) => request<LabTest[]>("GET", `/lab/tests?q=${encodeURIComponent(q)}${opts.all ? "&all=true" : ""}`),
+  createLabTest: (input: TestInput) => request<LabTest>("POST", "/lab/tests", input),
+  updateLabTest: (id: string, input: TestInput) => request<LabTest>("PUT", `/lab/tests/${id}`, input),
+  addStarterTests: () => request<{ added: number; skipped: number }>("POST", "/lab/tests/starter"),
+  labRequests: () => request<LabRequest[]>("GET", "/lab/requests"),
+  billLab: (input: LabBillInput) => request<LabOrderDetail>("POST", "/lab/orders", input),
+  labOrders: (date: string) => request<LabOrderSummary[]>("GET", `/lab/orders?date=${date}`),
+  labOrder: (id: string) => request<LabOrderDetail>("GET", `/lab/orders/${id}`),
+  collectSamples: (orderId: string, input: CollectInput = {}) => request<LabOrderDetail>("POST", `/lab/orders/${orderId}/collect`, input),
+  rejectSample: (sampleId: string, input: RejectSampleInput) => request<LabOrderDetail>("POST", `/lab/samples/${sampleId}/reject`, input),
+  saveResults: (orderTestId: string, input: ResultsInput) => request<OrderTest>("PUT", `/lab/results/${orderTestId}`, input),
+  verifyResult: (orderTestId: string, rowVersion: number) => request<OrderTest>("POST", `/lab/results/${orderTestId}/verify`, { rowVersion }),
+  amendResult: (orderTestId: string, input: AmendInput) => request<OrderTest>("POST", `/lab/results/${orderTestId}/amend`, input),
+  patientLabResults: (patientId: string) => request<PatientLabResult[]>("GET", `/lab/patients/${patientId}/results`),
 
   // Auth
   authStatus: () => request<AuthStatus>("GET", "/auth/status"),

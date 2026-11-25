@@ -23,6 +23,8 @@ import { BackupService } from "./modules/backup/service.js";
 import * as consult from "./modules/consult/service.js";
 import * as pharmacy from "./modules/pharmacy/catalog.js";
 import * as pharmacyTx from "./modules/pharmacy/transactions.js";
+import * as labCatalog from "./modules/lab/catalog.js";
+import * as lab from "./modules/lab/orders.js";
 import { DrugSchedule } from "@ojas/shared";
 
 export interface AppOptions {
@@ -350,6 +352,43 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     const schedules = (req.query.schedule ?? "H1,X").split(",").map((x) => DrugSchedule.parse(x.trim()));
     return pharmacyTx.register(db, dateParam(req.query.from ?? today()), dateParam(req.query.to ?? req.query.from ?? today()), schedules);
   });
+
+  // ── Laboratory ──
+  const labChanged = <T extends { id: string } | { orderId: string }>(r: T, orderId?: string): T => {
+    realtime.broadcast({ type: "lab.changed", orderId: orderId ?? ("orderId" in r ? r.orderId : r.id) });
+    return r;
+  };
+  const orderOfTest = async (testId: string) =>
+    (await db.query<{ order_id: string }>("select order_id from lab.order_test where id = $1", [testId])).rows[0]?.order_id;
+  app.get<{ Querystring: { q?: string; all?: string } }>("/api/lab/tests", async (req) => {
+    const perms = req.session!.user.permissions;
+    if (!perms.some((p) => p.startsWith("lab."))) throw new AppError(403, "forbidden", "You don't have permission to do this. Ask an administrator.");
+    return labCatalog.listTests(db, { q: req.query.q, includeInactive: req.query.all === "true" });
+  });
+  app.post("/api/lab/tests", need("lab.tests"), async (req, reply) => reply.status(201).send(await labCatalog.createTest(db, actorOf(req), req.body)));
+  app.put<ById>("/api/lab/tests/:id", need("lab.tests"), async (req) => labCatalog.updateTest(db, actorOf(req), idParam(req.params.id), req.body));
+  app.post("/api/lab/tests/starter", need("lab.tests"), async (req) => labCatalog.addStarterTests(db, actorOf(req)));
+  app.get("/api/lab/requests", need("lab.order"), async () => lab.pendingRequests(db, now()));
+  app.post("/api/lab/orders", need("lab.order"), async (req, reply) =>
+    reply.status(201).send(labChanged(await lab.billOrder(db, actorOf(req), req.body, now(), { allowDiscount: can(req.session!.user.role, "billing.discount") }))),
+  );
+  app.get<{ Querystring: { date?: string } }>("/api/lab/orders", need("lab.read"), async (req) => lab.listOrders(db, dateParam(req.query.date ?? today()), now()));
+  app.get<ById>("/api/lab/orders/:id", need("lab.read"), async (req) => lab.getOrder(db, idParam(req.params.id)));
+  app.post<ById>("/api/lab/orders/:id/collect", need("lab.collect"), async (req) => labChanged(await lab.collect(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.post<ById>("/api/lab/samples/:id/reject", need("lab.collect"), async (req) => labChanged(await lab.rejectSample(db, actorOf(req), idParam(req.params.id), req.body, now())));
+  app.put<ById>("/api/lab/results/:id", need("lab.result"), async (req) => {
+    const r = await lab.saveResults(db, actorOf(req), idParam(req.params.id), req.body, now());
+    return labChanged(r, await orderOfTest(r.id));
+  });
+  app.post<ById>("/api/lab/results/:id/verify", need("lab.verify"), async (req) => {
+    const r = await lab.verify(db, actorOf(req), idParam(req.params.id), req.body, now());
+    return labChanged(r, await orderOfTest(r.id));
+  });
+  app.post<ById>("/api/lab/results/:id/amend", need("lab.verify"), async (req) => {
+    const r = await lab.amend(db, actorOf(req), idParam(req.params.id), req.body);
+    return labChanged(r, await orderOfTest(r.id));
+  });
+  app.get<ById>("/api/lab/patients/:id/results", need("lab.read"), async (req) => lab.patientResults(db, idParam(req.params.id)));
 
   // ── Web UI for LAN browsers / token displays ──
   if (opts.webDir && existsSync(opts.webDir)) {

@@ -34,6 +34,11 @@ export function useServerEvents(): Connection {
           void qc.invalidateQueries({ queryKey: ["slots"] });
         } else if (ev.type === "consult.changed") {
           void qc.invalidateQueries({ queryKey: ["consult", ev.appointmentId] });
+        } else if (ev.type === "lab.changed") {
+          void qc.invalidateQueries({ queryKey: ["lab-orders"] });
+          void qc.invalidateQueries({ queryKey: ["lab-order", ev.orderId] });
+          void qc.invalidateQueries({ queryKey: ["lab-requests"] });
+          void qc.invalidateQueries({ queryKey: ["lab-results"] });
         }
       };
       ws.onclose = () => {

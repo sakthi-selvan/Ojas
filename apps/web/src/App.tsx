@@ -10,19 +10,21 @@ import { FrontDesk } from "./features/front-desk/FrontDesk";
 import { QueueBoard } from "./features/queue/QueueBoard";
 import { ConsultPage } from "./features/consult/ConsultPage";
 import { PharmacyPage } from "./features/pharmacy/PharmacyPage";
+import { LabPage } from "./features/lab/LabPage";
 import { UsersPage } from "./features/admin/UsersPage";
 import { SettingsPage, type SettingsTab } from "./features/settings/SettingsPage";
 import { BackupBanner } from "./features/backup/BackupBanner";
 import { CredentialsForm } from "./features/auth/AuthScreens";
 import { Kbd, cx } from "./components/ui";
 
-type Page = "front-desk" | "queue" | "consult" | "pharmacy" | "settings" | "users";
+type Page = "front-desk" | "queue" | "consult" | "pharmacy" | "lab" | "settings" | "users";
 
 /** Each page appears only for roles that can use it. */
 const nav: { id: Page; label: string; icon: typeof ClipboardList; key: string; perm?: Permission | Permission[] }[] = [
   { id: "front-desk", label: "Front desk", icon: ClipboardList, key: "Alt+1", perm: "appointments.book" },
   { id: "consult", label: "Consultation", icon: NotebookPen, key: "Alt+3", perm: "consult.write" },
   { id: "queue", label: "OPD queue", icon: Stethoscope, key: "Alt+2" },
+  { id: "lab", label: "Laboratory", icon: FlaskConical, key: "Alt+5", perm: ["lab.order", "lab.collect", "lab.result", "lab.verify", "lab.tests"] },
   { id: "pharmacy", label: "Pharmacy", icon: Pill, key: "Alt+4", perm: ["pharmacy.sell", "pharmacy.stock", "pharmacy.purchase", "pharmacy.reports"] },
   { id: "settings", label: "Settings", icon: Settings, key: "Alt+8", perm: "settings.manage" },
   { id: "users", label: "Users", icon: Users, key: "Alt+9", perm: "users.manage" },
@@ -30,7 +32,6 @@ const nav: { id: Page; label: string; icon: typeof ClipboardList; key: string; p
 
 /** Upcoming modules are shown, but clearly disabled, so the product roadmap is visible without confusing anyone. */
 const upcoming = [
-  { label: "Laboratory", icon: FlaskConical },
   { label: "In-patients", icon: BedDouble },
 ];
 
@@ -97,7 +98,7 @@ export function App() {
       </header>
       {can("settings.manage") && <BackupBanner onOpen={openBackups} />}
       <main id="main" className="flex-1">
-        {page === "front-desk" ? <FrontDesk /> : page === "consult" ? <ConsultPage /> : page === "pharmacy" ? <PharmacyPage /> : page === "users" ? <UsersPage /> : page === "settings" ? <SettingsPage key={settingsTab.n} initialTab={settingsTab.tab} /> : <QueueBoard />}
+        {page === "front-desk" ? <FrontDesk /> : page === "consult" ? <ConsultPage /> : page === "pharmacy" ? <PharmacyPage /> : page === "lab" ? <LabPage /> : page === "users" ? <UsersPage /> : page === "settings" ? <SettingsPage key={settingsTab.n} initialTab={settingsTab.tab} /> : <QueueBoard />}
       </main>
     </div>
   );

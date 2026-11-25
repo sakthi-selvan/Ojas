@@ -477,6 +477,91 @@ export const migrations: { id: number; name: string; sql: string }[] = [
       create index stock_move_batch_idx on pharmacy.stock_move (batch_id, at);
     `,
   },
+  {
+    id: 7,
+    name: "laboratory",
+    sql: `
+      create schema if not exists lab;
+
+      -- The test catalogue. Parameters (with reference ranges) are copied onto each order when billed.
+      create table lab.test (
+        id          uuid primary key,
+        code        text not null unique,
+        name        text not null,
+        name_search text not null,
+        section     text not null,
+        sample_type text not null,
+        price       bigint not null check (price >= 0),
+        tat_hours   integer not null default 24,
+        method      text not null default '',
+        aliases     text[] not null default '{}',
+        notes       text not null default '',
+        parameters  jsonb not null,
+        active      boolean not null default true,
+        ${meta}
+      );
+
+      -- The lab bill. Never edited.
+      create table lab.lab_order (
+        id             uuid primary key,
+        order_no       text not null unique,
+        ordered_at     timestamptz not null,
+        patient_id     uuid not null references core.patient(id),
+        appointment_id uuid references core.appointment(id),
+        referred_by    text not null default '',
+        subtotal       bigint not null,
+        discount       bigint not null default 0,
+        total          bigint not null,
+        payment_mode   text not null check (payment_mode in ('CASH','UPI','CARD')),
+        check (discount <= subtotal and total = subtotal - discount),
+        ${meta}
+      );
+      create index lab_order_at_idx on lab.lab_order (ordered_at desc);
+      create index lab_order_patient_idx on lab.lab_order (patient_id, ordered_at desc);
+      create index lab_order_appointment_idx on lab.lab_order (appointment_id) where appointment_id is not null;
+
+      -- One tube or container, with the accession number on its label.
+      create table lab.sample (
+        id            uuid primary key,
+        accession_no  text not null unique,
+        order_id      uuid not null references lab.lab_order(id),
+        sample_type   text not null,
+        collected_at  timestamptz not null,
+        collected_by  text not null,
+        rejected_at   timestamptz,
+        rejected_by   text,
+        reject_reason text not null default ''
+      );
+
+      create table lab.order_test (
+        id           uuid primary key,
+        order_id     uuid not null references lab.lab_order(id),
+        line_no      integer not null,
+        test_id      uuid not null references lab.test(id),
+        code         text not null,
+        name         text not null,
+        section      text not null,
+        sample_type  text not null,
+        method       text not null default '',
+        notes        text not null default '',
+        parameters   jsonb not null,
+        price        bigint not null,
+        due_at       timestamptz not null,
+        status       text not null default 'ORDERED' check (status in ('ORDERED','COLLECTED','RESULTED','VERIFIED')),
+        sample_id    uuid references lab.sample(id),
+        results      jsonb not null default '[]',
+        remarks      text not null default '',
+        entered_at   timestamptz,
+        entered_by   text,
+        verified_at  timestamptz,
+        verified_by  text,
+        amend_reason text,
+        row_version  integer not null default 1,
+        unique (order_id, line_no)
+      );
+      create index order_test_status_idx on lab.order_test (status) where status <> 'VERIFIED';
+    `,
+  },
 ];
 
 export async function migrate(db: Db): Promise<void> {
